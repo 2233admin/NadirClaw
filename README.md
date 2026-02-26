@@ -78,7 +78,7 @@ That's it. NadirClaw starts on `http://localhost:8856` with sensible defaults (G
 - **OpenTelemetry tracing** — optional distributed tracing with GenAI semantic conventions (`pip install nadirclaw[telemetry]`)
 - **Cost savings calculator** — `nadirclaw savings` shows exactly how much money you've saved, with monthly projections
 - **Spend tracking and budgets** — real-time per-request cost tracking with daily/monthly budget limits and alerts via `nadirclaw budget`
-- **Live dashboard** — `nadirclaw dashboard` shows real-time routing stats, cost savings, and tier distribution in your terminal
+- **Live dashboard** — `nadirclaw dashboard` for terminal, or visit `http://localhost:8856/dashboard` for a web UI with real-time stats, cost tracking, and model usage
 - **GitHub Action** — [`doramirdor/nadirclaw-action`](https://github.com/doramirdor/nadirclaw-action) for CI/CD pipelines
 
 ## Prerequisites

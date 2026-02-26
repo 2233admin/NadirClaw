@@ -209,7 +209,11 @@ def report(since, model, fmt, export_path):
 @main.command()
 @click.option("--refresh", default=2.0, type=float, help="Refresh interval in seconds")
 def dashboard(refresh):
-    """Live terminal dashboard showing real-time routing stats."""
+    """Live terminal dashboard showing real-time routing stats.
+
+    For a web-based dashboard, visit http://localhost:8856/dashboard
+    while the server is running.
+    """
     from nadirclaw.dashboard import run_dashboard
     from nadirclaw.settings import settings
 

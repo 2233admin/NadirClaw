@@ -87,6 +87,10 @@ app = FastAPI(
     description="Open-source LLM router — simple prompts to free models, complex to premium",
 )
 
+# Register web dashboard routes
+from nadirclaw.web_dashboard import router as dashboard_router
+app.include_router(dashboard_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
