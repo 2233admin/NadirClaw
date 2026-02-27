@@ -288,6 +288,44 @@ def budget(fmt):
         click.echo("     NADIRCLAW_MONTHLY_BUDGET=50.00 to enable alerts.")
 
 
+@main.command()
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]), help="Output format")
+def cache(fmt):
+    """Show prompt cache statistics (queries running server)."""
+    import urllib.request
+
+    from nadirclaw.settings import settings
+
+    try:
+        url = f"http://localhost:{settings.PORT}/v1/cache"
+        headers = {}
+        token = settings.AUTH_TOKEN
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        click.echo(f"Could not reach NadirClaw server: {e}")
+        click.echo("Make sure the server is running (nadirclaw serve).")
+        raise SystemExit(1)
+
+    if fmt == "json":
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    click.echo("NadirClaw Prompt Cache")
+    click.echo("=" * 40)
+    click.echo(f"  Enabled:    {data.get('enabled', '?')}")
+    click.echo(f"  Entries:    {data.get('entries', 0)} / {data.get('max_size', '?')}")
+    click.echo(f"  TTL:        {data.get('ttl', '?')}s")
+    click.echo(f"  Hits:       {data.get('hits', 0)}")
+    click.echo(f"  Misses:     {data.get('misses', 0)}")
+    hit_rate = data.get('hit_rate', 0)
+    click.echo(f"  Hit rate:   {hit_rate:.1%}")
+    click.echo(f"  Lookups:    {data.get('total_lookups', 0)}")
+
+
 @main.command(name="build-centroids")
 def build_centroids():
     """Regenerate centroid .npy files from prototype prompts."""

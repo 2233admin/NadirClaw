@@ -963,27 +963,50 @@ async def chat_completions(
         provider = detect_provider(selected_model)
 
         # ------------------------------------------------------------------
+        # Prompt cache — check before calling the model
+        # ------------------------------------------------------------------
+        from nadirclaw.cache import _cache_enabled, get_prompt_cache
+
+        prompt_cache = get_prompt_cache()
+        cache_hit = False
+        if _cache_enabled() and not request.stream:
+            cached_response = prompt_cache.get(selected_model, request.messages)
+            if cached_response is not None:
+                response_data = cached_response
+                cache_hit = True
+
+        # ------------------------------------------------------------------
         # Call model — with automatic fallback on rate limit
         # ------------------------------------------------------------------
         from nadirclaw.telemetry import record_llm_call, trace_span
 
-        with trace_span("chat_completion", {"nadirclaw.tier": analysis_info.get("tier")}) as span:
-            response_data, selected_model, analysis_info = await _call_with_fallback(
-                selected_model, request, provider, analysis_info,
-            )
+        if not cache_hit:
+            with trace_span("chat_completion", {"nadirclaw.tier": analysis_info.get("tier")}) as span:
+                response_data, selected_model, analysis_info = await _call_with_fallback(
+                    selected_model, request, provider, analysis_info,
+                )
 
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                total_tokens = response_data["prompt_tokens"] + response_data["completion_tokens"]
+
+                record_llm_call(
+                    span,
+                    model=selected_model,
+                    provider=provider,
+                    prompt_tokens=response_data["prompt_tokens"],
+                    completion_tokens=response_data["completion_tokens"],
+                    tier=analysis_info.get("tier"),
+                    latency_ms=elapsed_ms,
+                )
+
+            # Store in prompt cache
+            if _cache_enabled():
+                prompt_cache.put(selected_model, request.messages, response_data)
+        else:
             elapsed_ms = int((time.time() - start_time) * 1000)
             total_tokens = response_data["prompt_tokens"] + response_data["completion_tokens"]
-
-            record_llm_call(
-                span,
-                model=selected_model,
-                provider=provider,
-                prompt_tokens=response_data["prompt_tokens"],
-                completion_tokens=response_data["completion_tokens"],
-                tier=analysis_info.get("tier"),
-                latency_ms=elapsed_ms,
-            )
+            analysis_info["strategy"] = analysis_info.get("strategy", "") + "+cache-hit"
+            logger.info("Cache HIT — skipped LLM call (elapsed=%dms)", elapsed_ms)
 
         # --- Budget tracking ---
         from nadirclaw.budget import get_budget_tracker
@@ -1181,6 +1204,15 @@ async def view_logs(
 # ---------------------------------------------------------------------------
 # /v1/models & /health
 # ---------------------------------------------------------------------------
+
+@app.get("/v1/cache")
+async def get_cache_stats(
+    current_user: UserSession = Depends(validate_local_auth),
+) -> Dict[str, Any]:
+    """Get prompt cache statistics."""
+    from nadirclaw.cache import get_prompt_cache
+    return get_prompt_cache().get_stats()
+
 
 @app.get("/v1/budget")
 async def get_budget(
