@@ -183,6 +183,10 @@ def _log_request(entry: Dict[str, Any]) -> None:
         with open(request_log, "a") as f:
             f.write(line)
 
+    # Also log to SQLite
+    from nadirclaw.request_logger import log_request as sqlite_log
+    sqlite_log(entry)
+
     tier = entry.get("tier", "?")
     model = entry.get("selected_model", "?")
     conf = entry.get("confidence", 0)
