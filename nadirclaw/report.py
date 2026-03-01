@@ -2,6 +2,7 @@
 
 import json
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,38 @@ def parse_since(since_str: str) -> datetime:
             continue
 
     raise ValueError(f"Cannot parse time filter: {since_str!r}. Use e.g. '24h', '7d', '2025-02-01'.")
+
+
+def load_log_entries_sqlite(
+    db_path: Path,
+    since: Optional[datetime] = None,
+    model_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Read entries from the SQLite request log."""
+    if not db_path.exists():
+        return []
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        query = "SELECT * FROM requests WHERE 1=1"
+        params: List[Any] = []
+
+        if since:
+            query += " AND timestamp >= ?"
+            params.append(since.isoformat())
+
+        if model_filter:
+            query += " AND selected_model LIKE ?"
+            params.append(f"%{model_filter}%")
+
+        query += " ORDER BY timestamp ASC"
+
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
 
 
 def load_log_entries(
@@ -119,20 +152,25 @@ def generate_report(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         req_type = e.get("type", "unknown")
         requests_by_type[req_type] = requests_by_type.get(req_type, 0) + 1
 
-    # Model usage
-    model_usage: Dict[str, Dict[str, int]] = {}
+    # Model usage (with cost)
+    model_usage: Dict[str, Dict[str, Any]] = {}
     for e in entries:
         model = e.get("selected_model")
         if not model:
             continue
         if model not in model_usage:
-            model_usage[model] = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            model_usage[model] = {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost": 0.0}
         model_usage[model]["requests"] += 1
         pt = _safe_int(e.get("prompt_tokens", 0))
         ct = _safe_int(e.get("completion_tokens", 0))
+        cost = _safe_float(e.get("cost")) or 0.0
         model_usage[model]["prompt_tokens"] += pt
         model_usage[model]["completion_tokens"] += ct
         model_usage[model]["total_tokens"] += pt + ct
+        model_usage[model]["cost"] += cost
+
+    # Total cost
+    total_cost = sum(info["cost"] for info in model_usage.values())
 
     # Tier distribution
     tier_counts: Dict[str, int] = {}
@@ -186,6 +224,7 @@ def generate_report(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         "tier_distribution": tier_distribution,
         "latency": latency,
         "tokens": tokens,
+        "total_cost": total_cost,
         "fallback_count": fallback_count,
         "error_count": error_count,
         "streaming_count": streaming_count,
@@ -225,15 +264,27 @@ def format_report_text(report: Dict[str, Any]) -> str:
         for tier, info in tiers.items():
             lines.append(f"  {tier:20s} {info['count']:>6}  ({info['percentage']}%)")
 
-    # Model usage
+    # Total cost
+    total_cost = report.get("total_cost", 0)
+    if total_cost > 0:
+        lines.append(f"Total cost: ${total_cost:.4f}")
+
+    # Model usage (with cost breakdown)
     models = report.get("model_usage", {})
     if models:
         lines.append("")
         lines.append("Model Usage")
-        lines.append("-" * 60)
-        lines.append(f"  {'Model':35s} {'Reqs':>6}  {'Tokens':>10}")
-        for model, info in sorted(models.items(), key=lambda x: x[1]["requests"], reverse=True):
-            lines.append(f"  {model:35s} {info['requests']:>6}  {info['total_tokens']:>10}")
+        lines.append("-" * 70)
+        has_cost = any(info.get("cost", 0) > 0 for info in models.values())
+        if has_cost:
+            lines.append(f"  {'Model':35s} {'Reqs':>6}  {'Tokens':>10}  {'Cost':>10}")
+            for model, info in sorted(models.items(), key=lambda x: x[1].get("cost", 0), reverse=True):
+                cost_str = f"${info.get('cost', 0):.4f}"
+                lines.append(f"  {model:35s} {info['requests']:>6}  {info['total_tokens']:>10}  {cost_str:>10}")
+        else:
+            lines.append(f"  {'Model':35s} {'Reqs':>6}  {'Tokens':>10}")
+            for model, info in sorted(models.items(), key=lambda x: x[1]["requests"], reverse=True):
+                lines.append(f"  {model:35s} {info['requests']:>6}  {info['total_tokens']:>10}")
 
     # Latency
     lat = report.get("latency", {})

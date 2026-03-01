@@ -169,17 +169,20 @@ def status():
 @click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]), help="Output format")
 @click.option("--export", "export_path", default=None, type=click.Path(), help="Export report to file")
 def report(since, model, fmt, export_path):
-    """Show a summary report of request logs."""
+    """Show a summary report of request logs (reads SQLite first, falls back to JSONL)."""
     from nadirclaw.report import (
         format_report_text,
         generate_report,
         load_log_entries,
+        load_log_entries_sqlite,
         parse_since,
     )
     from nadirclaw.settings import settings
 
-    log_path = settings.LOG_DIR / "requests.jsonl"
-    if not log_path.exists():
+    db_path = settings.LOG_DIR / "requests.db"
+    jsonl_path = settings.LOG_DIR / "requests.jsonl"
+
+    if not db_path.exists() and not jsonl_path.exists():
         click.echo("No log file found. Start the server and make some requests first.")
         return
 
@@ -191,7 +194,12 @@ def report(since, model, fmt, export_path):
             click.echo(f"Error: {e}")
             raise SystemExit(1)
 
-    entries = load_log_entries(log_path, since=since_dt, model_filter=model)
+    # Prefer SQLite (richer data), fall back to JSONL
+    if db_path.exists():
+        entries = load_log_entries_sqlite(db_path, since=since_dt, model_filter=model)
+    else:
+        entries = load_log_entries(jsonl_path, since=since_dt, model_filter=model)
+
     report_data = generate_report(entries)
 
     if fmt == "json":
