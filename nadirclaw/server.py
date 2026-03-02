@@ -669,7 +669,78 @@ async def _call_litellm(
     if cred_provider and cred_provider != "ollama":
         api_key = get_credential(cred_provider)
         if api_key:
-            call_kwargs["api_key"] = api_key
+            # Anthropic OAuth/setup-tokens (sk-ant-oat*) require Bearer auth
+            # and the oauth-2025-04-20 beta header. Bypass LiteLLM and call
+            # the Anthropic API directly since LiteLLM uses x-api-key.
+            if cred_provider == "anthropic" and "sk-ant-oat" in api_key:
+                import httpx
+                model_id = litellm_model.removeprefix("anthropic/")
+                anthropic_messages = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in call_kwargs.get("messages", [])
+                    if m.get("content") is not None
+                ]
+                anthropic_body = {
+                    "model": model_id,
+                    "messages": anthropic_messages,
+                    "max_tokens": call_kwargs.get("max_tokens", 1024),
+                }
+                if call_kwargs.get("temperature") is not None:
+                    anthropic_body["temperature"] = call_kwargs["temperature"]
+                req_extra = request.model_extra or {}
+                if req_extra.get("tools"):
+                    anthropic_body["tools"] = req_extra["tools"]
+                if req_extra.get("tool_choice"):
+                    anthropic_body["tool_choice"] = req_extra["tool_choice"]
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "anthropic-version": "2023-06-01",
+                            "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+                            "content-type": "application/json",
+                        },
+                        json=anthropic_body,
+                    )
+                if resp.status_code != 200:
+                    error_detail = resp.text
+                    logger.error("Anthropic OAuth call failed (%s): %s", resp.status_code, error_detail)
+                    from litellm.exceptions import AuthenticationError as LiteLLMAuthError
+                    raise LiteLLMAuthError(
+                        message=f"Anthropic OAuth error: {error_detail}",
+                        model=model,
+                        llm_provider="anthropic",
+                    )
+                data = resp.json()
+                content_text = ""
+                for block in data.get("content", []):
+                    if block.get("type") == "text":
+                        content_text += block["text"]
+                prompt_tok = data.get("usage", {}).get("input_tokens", 0)
+                compl_tok = data.get("usage", {}).get("output_tokens", 0)
+                return {
+                    "id": data.get("id", ""),
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": data.get("model", model_id),
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": content_text},
+                        "finish_reason": data.get("stop_reason", "stop"),
+                    }],
+                    "usage": {
+                        "prompt_tokens": prompt_tok,
+                        "completion_tokens": compl_tok,
+                        "total_tokens": prompt_tok + compl_tok,
+                    },
+                    "prompt_tokens": prompt_tok,
+                    "completion_tokens": compl_tok,
+                    "content": content_text,
+                    "finish_reason": data.get("stop_reason", "stop"),
+                }
+            else:
+                call_kwargs["api_key"] = api_key
 
     # Pass api_base for Ollama models so LiteLLM reaches the right host
     if litellm_model.startswith("ollama/") or litellm_model.startswith("ollama_chat/"):
