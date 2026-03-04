@@ -87,7 +87,7 @@ class TestAuthEnforcement:
     def test_completion_without_token_returns_401(self, authed_client):
         resp = authed_client.post(
             "/v1/chat/completions",
-            json={"messages": [{"role": "user", "content": "Hi"}]},
+            json={"messages": [{"role": "user", "content": "e2e auth test prompt j8w"}]},
         )
         assert resp.status_code == 401
 
@@ -95,7 +95,7 @@ class TestAuthEnforcement:
         resp = authed_client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer wrong-token"},
-            json={"messages": [{"role": "user", "content": "Hi"}]},
+            json={"messages": [{"role": "user", "content": "e2e auth test prompt j8w"}]},
         )
         assert resp.status_code == 401
 
@@ -105,7 +105,7 @@ class TestAuthEnforcement:
         resp = authed_client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={"messages": [{"role": "user", "content": "Hi"}]},
+            json={"messages": [{"role": "user", "content": "e2e auth test prompt j8w"}]},
         )
         assert resp.status_code == 200
 
@@ -116,7 +116,7 @@ class TestAuthEnforcement:
         resp = authed_client.post(
             "/v1/chat/completions",
             headers={"X-API-Key": auth_token},
-            json={"messages": [{"role": "user", "content": "Hi"}]},
+            json={"messages": [{"role": "user", "content": "e2e auth test prompt j8w"}]},
         )
         assert resp.status_code == 200
 
@@ -125,7 +125,7 @@ class TestAuthEnforcement:
         resp = authed_client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {'x' * 1001}"},
-            json={"messages": [{"role": "user", "content": "Hi"}]},
+            json={"messages": [{"role": "user", "content": "e2e auth test prompt j8w"}]},
         )
         assert resp.status_code == 400
 
@@ -141,7 +141,7 @@ class TestAliasResolution:
     def test_sonnet_alias_resolves(self, mock_fb, client):
         mock_fb.side_effect = _mock_fallback(content="Sonnet reply")
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e alias test sonnet 7k3"}],
             "model": "sonnet",
         })
         assert resp.status_code == 200
@@ -154,7 +154,7 @@ class TestAliasResolution:
     def test_gpt4_alias_resolves(self, mock_fb, client):
         mock_fb.side_effect = _mock_fallback(content="GPT4 reply")
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e alias test gpt4 9m2"}],
             "model": "gpt4",
         })
         assert resp.status_code == 200
@@ -166,7 +166,7 @@ class TestAliasResolution:
     def test_flash_alias_resolves(self, mock_fb, client):
         mock_fb.side_effect = _mock_fallback(content="Flash reply")
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e alias test flash 4q8"}],
             "model": "flash",
         })
         assert resp.status_code == 200
@@ -179,7 +179,7 @@ class TestAliasResolution:
         """nadirclaw/<profile> prefix notation should work for profiles."""
         mock_fb.side_effect = _mock_fallback()
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e prefix test eco 2p5"}],
             "model": "nadirclaw/eco",
         })
         assert resp.status_code == 200
@@ -222,7 +222,7 @@ class TestAdditionalProfiles:
     def test_auto_profile_uses_smart_routing(self, mock_fb, client):
         mock_fb.side_effect = _mock_fallback(content="Auto answer")
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e auto profile test 8r1"}],
             "model": "auto",
         })
         assert resp.status_code == 200
@@ -241,7 +241,7 @@ class TestRoutingMetadataShape:
     def test_required_metadata_keys_present(self, mock_fb, client):
         mock_fb.side_effect = _mock_fallback(prompt_tokens=20, completion_tokens=8)
         resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "What is 2+2?"}],
+            "messages": [{"role": "user", "content": "What is 3 plus 5 e2e metadata test"}],
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -280,9 +280,9 @@ class TestRoutingMetadataShape:
         """Each response should get a distinct ID."""
         mock_fb.side_effect = _mock_fallback()
         ids = set()
-        for _ in range(3):
+        for i in range(3):
             resp = client.post("/v1/chat/completions", json={
-                "messages": [{"role": "user", "content": "Hello"}],
+                "messages": [{"role": "user", "content": f"e2e unique id test iteration {i} z3q"}],
             })
             ids.add(resp.json()["id"])
         assert len(ids) == 3
@@ -308,7 +308,7 @@ class TestMetricsHTTPEndpoint:
         """After a completion, metrics counters must reflect the request."""
         mock_fb.side_effect = _mock_fallback(prompt_tokens=50, completion_tokens=20)
         client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": "Hello"}],
+            "messages": [{"role": "user", "content": "e2e metrics increment test 5v9"}],
         })
 
         resp = client.get("/metrics")
@@ -371,11 +371,11 @@ class TestBatchClassify:
 
     def test_large_batch(self, client):
         prompts = [
-            "What is 2+2?",
-            "Explain quantum entanglement in detail",
-            "Hi",
-            "Design a scalable microservices architecture for a bank",
-            "What time is it?",
+            "What is 9 times 3?",
+            "Explain quantum entanglement in detail for a e2e batch test",
+            "Greetings e2e",
+            "Design a scalable microservices architecture for a bank e2e batch",
+            "What time is it right now in Paris?",
         ]
         resp = client.post("/v1/classify/batch", json={"prompts": prompts})
         assert resp.status_code == 200
@@ -386,7 +386,7 @@ class TestBatchClassify:
     def test_duplicate_prompts_both_classified(self, client):
         """Duplicate prompts in a batch should each get their own result."""
         resp = client.post("/v1/classify/batch", json={
-            "prompts": ["What is 2+2?", "What is 2+2?"],
+            "prompts": ["What is 7 plus 8?", "What is 7 plus 8?"],
         })
         assert resp.status_code == 200
         data = resp.json()
