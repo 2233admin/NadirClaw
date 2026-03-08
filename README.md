@@ -1047,6 +1047,15 @@ nadirclaw/
   complex_centroid.npy  # Pre-computed complex centroid vector
 ```
 
+## Roadmap
+
+### Upcoming Features (v0.8+)
+
+- **Circuit Breaker**: 4-state health monitoring (CLOSED → OPEN → HALF_OPEN → CLOSED) with automatic provider failover. Unhealthy providers are taken offline and gradually re-admitted, preventing cascading failures and reducing error rates.
+- **Web Crawl Routing**: Detect crawl/scrape tasks and route to specialized providers (Firecrawl integration planned). NadirClaw will recognize prompts that involve fetching, parsing, or extracting web content and forward them to providers optimized for that workload.
+- **OpenRouter Free Model Load Balancing**: Weighted round-robin across free models for economy tier, reducing costs by an additional 30-40%. Ideal for high-volume workloads where quality requirements are relaxed.
+- **FSC-Mesh Integration**: Connect to a distributed cost control plane for enterprise-grade budget management with automatic model tier degradation (premium → standard → economy → paused). Enables cross-node budget enforcement and fleet-wide cost visibility.
+
 ## License
 
 MIT
