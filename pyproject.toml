@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nadirclaw"
 dynamic = ["version"]
-description = "Open-source LLM router — simple prompts to free models, complex to premium"
+description = "Source-available LLM router: simple prompts to free models, complex to premium"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 authors = [{name = "Nadir", email = "nadir@nadirclaw.com"}]
 keywords = ["llm", "router", "ai", "openai", "gemini", "anthropic", "cost-optimization", "model-routing"]
 classifiers = [
@@ -24,7 +24,11 @@ classifiers = [
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
-    "litellm>=1.0.0",
+    "litellm>=1.0.0; python_version >= '3.11'",
+    # ponytail: litellm 1.98.0 imports typing.NotRequired (3.11+) from
+    # llms/anthropic/experimental_pass_through/context_management/editors/compact.py
+    # while still declaring Requires-Python >=3.10. Drop this cap once upstream fixes it.
+    "litellm>=1.0.0,<1.98.0; python_version < '3.11'",
     "sentence-transformers>=2.0.0",
     "numpy",
     "python-dotenv",
@@ -48,22 +52,48 @@ include = ["nadirclaw*"]
 version = {attr = "nadirclaw.__version__"}
 
 [tool.setuptools.package-data]
-nadirclaw = ["*.npy"]
+nadirclaw = [
+    "*.npy",
+    "cascade_rules/profiles/*.yaml",
+    "models/*.pt",
+    "tier_config/profiles/*.yaml",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "httpx",
+    "pyyaml>=6.0",
 ]
 dashboard = [
     "rich>=13.0",
+]
+cascade-rules = [
+    # PyYAML is only needed to LOAD cascade rule profiles from disk
+    # (`load_profile`). `load_inline` works without it, so this is opt-in.
+    "pyyaml>=6.0",
+]
+headroom = [
+    # Optional context-compression backend (Apache-2.0, github.com/chopratejas/headroom).
+    # Activated with NADIRCLAW_OPTIMIZE_BACKEND=headroom. When absent, the optimizer
+    # transparently falls back to the built-in native pipeline, so this stays opt-in.
+    # Prebuilt wheels bundle the compiled Rust `_core` extension (SmartCrusher etc.).
+    "headroom-ai>=0.23.0",
 ]
 telemetry = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
     "opentelemetry-instrumentation-fastapi>=0.41b0",
+]
+trained = [
+    # Optional dependency for the TrainedVerifier (DeBERTa-v3-small
+    # cross-encoder loaded from nadirclaw/cascade-verifier-v1).
+    # The heuristic verifier remains the default for the cascade,
+    # so users who do not want the transformer stack pay nothing.
+    "transformers>=4.40",
+    "torch>=2.0",
 ]
 
 [tool.pytest.ini_options]

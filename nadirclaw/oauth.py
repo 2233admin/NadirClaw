@@ -234,7 +234,12 @@ def login_openai(timeout: int = 300) -> Optional[dict]:
     code_challenge = _generate_code_challenge(code_verifier)
     state = secrets.token_urlsafe(32)
 
-    redirect_uri = f"http://127.0.0.1:{_CALLBACK_PORT}{_CALLBACK_PATH}"
+    # Must exactly match the redirect_uri registered for the OpenAI OAuth client
+    # AND the callback server below (which binds/prints localhost). Hydra exact-
+    # matches this value against the client allow-list and rejects the authorize
+    # request with `authorize_hydra_invalid_request` on any mismatch — using
+    # 127.0.0.1 here instead of localhost triggers exactly that error (issue #67).
+    redirect_uri = f"http://localhost:{_CALLBACK_PORT}{_CALLBACK_PATH}"
 
     # Build authorization URL
     auth_params = {
@@ -319,11 +324,18 @@ def login_openai(timeout: int = 300) -> Optional[dict]:
         server.shutdown()
 
 
-def refresh_openai_token(refresh_token: str) -> dict:
-    """Refresh an OpenAI access token using a refresh token."""
+def refresh_openai_token(refresh_token: str, *, client_id: str = "") -> dict:
+    """Refresh an OpenAI access token using a refresh token.
+
+    Args:
+        refresh_token: The OAuth refresh token.
+        client_id: Optional override. When refreshing tokens issued by another
+            OAuth client (e.g. OpenClaw/pi-ai), the original client_id must be
+            used or the refresh will fail with 401.
+    """
     data = urllib.parse.urlencode({
         "grant_type": "refresh_token",
-        "client_id": _OPENAI_CLIENT_ID,
+        "client_id": client_id or _OPENAI_CLIENT_ID,
         "refresh_token": refresh_token,
     }).encode("utf-8")
 
@@ -346,11 +358,11 @@ def refresh_openai_token(refresh_token: str) -> dict:
 refresh_access_token = refresh_openai_token
 
 
-def refresh_anthropic_token(refresh_token: str) -> dict:
+def refresh_anthropic_token(refresh_token: str, *, client_id: str = "") -> dict:
     """Refresh an Anthropic access token using a refresh token."""
     data = urllib.parse.urlencode({
         "grant_type": "refresh_token",
-        "client_id": _ANTHROPIC_CLIENT_ID,
+        "client_id": client_id or _ANTHROPIC_CLIENT_ID,
         "refresh_token": refresh_token,
     }).encode("utf-8")
 
@@ -395,8 +407,26 @@ def _refresh_google_token(refresh_token: str, client_id: str, client_secret: str
         raise RuntimeError(f"Google token refresh failed ({e.code}): {body}") from e
 
 
-def refresh_gemini_token(refresh_token: str) -> dict:
-    """Refresh a Gemini CLI OAuth access token."""
+def refresh_gemini_token(refresh_token: str, *, client_id: str = "") -> dict:
+    """Refresh a Gemini CLI OAuth access token.
+
+    Args:
+        refresh_token: The OAuth refresh token.
+        client_id: Optional override for the OAuth client_id. When refreshing
+            tokens issued by OpenClaw, use the client_id from OpenClaw's
+            auth-profiles to avoid 401 errors.
+    """
+    if client_id:
+        # Use the provided client_id (e.g. from OpenClaw's auth-profiles).
+        # Try to find a matching client_secret from env.
+        client_secret = ""
+        for skey in _GEMINI_CLIENT_SECRET_ENV_KEYS:
+            sval = os.getenv(skey, "").strip()
+            if sval:
+                client_secret = sval
+                break
+        return _refresh_google_token(refresh_token, client_id=client_id, client_secret=client_secret)
+
     client_config = _resolve_gemini_client_config()
     if not client_config.get("client_id"):
         raise RuntimeError("Cannot refresh Gemini token: Gemini CLI not installed")
@@ -407,7 +437,7 @@ def refresh_gemini_token(refresh_token: str) -> dict:
     )
 
 
-def refresh_antigravity_token(refresh_token: str) -> dict:
+def refresh_antigravity_token(refresh_token: str, *, client_id: str = "") -> dict:
     """Refresh an Antigravity OAuth access token."""
     if not _ANTIGRAVITY_CLIENT_ID or not _ANTIGRAVITY_CLIENT_SECRET:
         raise RuntimeError(

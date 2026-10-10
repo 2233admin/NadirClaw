@@ -1,3 +1,3 @@
-"""NadirClaw — Open-source LLM router."""
+"""NadirClaw — Source-available LLM router."""
 
-__version__ = "0.7.0"
+__version__ = "0.24.0"

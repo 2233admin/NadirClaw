@@ -35,7 +35,7 @@ def calculate_actual_cost(entries: List[Dict[str, Any]]) -> float:
     """Calculate the actual cost of all requests using the models NadirClaw chose."""
     total = 0.0
     for e in entries:
-        model = e.get("selected_model", "")
+        model = e.get("selected_model") or ""
         pt = _safe_int(e.get("prompt_tokens", 0))
         ct = _safe_int(e.get("completion_tokens", 0))
         cost_in, cost_out = get_model_cost(model)
@@ -181,6 +181,9 @@ def format_savings_text(report: Dict[str, Any]) -> str:
 
     if report.get("total_requests", 0) == 0:
         lines.append("No requests found. Start using NadirClaw to see savings!")
+        lines.append("")
+        lines.append("Tip: Nadir Pro tracks savings in a live dashboard, no CLI needed.")
+        lines.append("     https://getnadir.com?ref=cli-savings")
         return "\n".join(lines)
 
     lines.append(f"Total requests:  {report['total_requests']}")
@@ -214,10 +217,12 @@ def format_savings_text(report: Dict[str, Any]) -> str:
         lines.append("Routing Distribution")
         lines.append("-" * 30)
         total = sum(tiers.values())
-        for tier, count in sorted(tiers.items()):
+        # Sort carefully handling None keys
+        for tier, count in sorted(tiers.items(), key=lambda item: str(item[0])):
+            tier_str = str(tier) if tier is not None else "unknown"
             pct = count / total * 100 if total else 0
             bar = "█" * int(pct / 2)
-            lines.append(f"  {tier:12s} {count:>5} ({pct:4.1f}%) {bar}")
+            lines.append(f"  {tier_str:12s} {count:>5} ({pct:4.1f}%) {bar}")
 
     # Monthly projection
     proj = report.get("projection", {})
@@ -228,6 +233,21 @@ def format_savings_text(report: Dict[str, Any]) -> str:
         lines.append(f"  Without NadirClaw:  ${proj['monthly_baseline']:.2f}/mo")
         lines.append(f"  With NadirClaw:     ${proj['monthly_actual']:.2f}/mo")
         lines.append(f"  Monthly savings:    ${proj['monthly_savings']:.2f}/mo")
+
+    # Pro upsell at the moment of highest intent: when the user has just
+    # seen their own savings number. Only shown if savings are positive.
+    savings_value = report.get("savings", 0) or 0
+    if savings_value > 0:
+        monthly = (proj or {}).get("monthly_savings", 0) or 0
+        lines.append("")
+        lines.append("=" * 50)
+        lines.append("Nadir Pro: trained classifier finds 10-20% more savings on the")
+        lines.append("same traffic, plus a live dashboard and team analytics.")
+        if monthly > 0:
+            lines.append(
+                f"At your current run rate, that is ~${monthly * 0.15:.2f}-${monthly * 0.20:.2f}/mo extra."
+            )
+        lines.append("Start the 30-day Pro trial: https://getnadir.com?ref=cli-savings")
 
     lines.append("")
     return "\n".join(lines)

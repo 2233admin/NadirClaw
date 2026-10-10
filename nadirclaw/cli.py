@@ -3,8 +3,10 @@
 import json
 import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -12,7 +14,7 @@ import click
 @click.group()
 @click.version_option(version=None, prog_name="nadirclaw", package_name="nadirclaw")
 def main():
-    """NadirClaw — Open-source LLM router."""
+    """NadirClaw — Source-available LLM router."""
     pass
 
 
@@ -31,20 +33,30 @@ def setup(reconfigure):
 
 @main.command()
 @click.option("--port", default=None, type=int, help="Port to listen on (default: 8856)")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Interface to bind. A non-loopback host requires an auth token")
 @click.option("--simple-model", default=None, help="Model for simple prompts")
 @click.option("--complex-model", default=None, help="Model for complex prompts")
 @click.option("--models", default=None, help="Comma-separated model list (legacy)")
 @click.option("--token", default=None, help="Auth token")
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("--log-raw", is_flag=True, help="Log full raw requests and responses to JSONL")
-def serve(port, simple_model, complex_model, models, token, verbose, log_raw):
+@click.option("--optimize", default=None, type=click.Choice(["off", "safe", "aggressive", "progressive"]),
+              help="Context compression: off | safe | aggressive | progressive (default: off)")
+def serve(port, host, simple_model, complex_model, models, token, verbose, log_raw, optimize):
     """Start the NadirClaw router server."""
     import logging
 
     from nadirclaw.setup import is_first_run
 
     if is_first_run():
-        if click.confirm("No configuration found. Run setup wizard?", default=True):
+        # Only ask when someone is there to answer. Under Docker, systemd or CI
+        # there is no tty, click.confirm raises Abort on EOF, and the server
+        # exits 1 instead of starting on defaults — which is what the else
+        # branch already does correctly.
+        if sys.stdin.isatty() and click.confirm(
+            "No configuration found. Run setup wizard?", default=True
+        ):
             from nadirclaw.setup import run_setup_wizard
             run_setup_wizard()
         else:
@@ -63,6 +75,20 @@ def serve(port, simple_model, complex_model, models, token, verbose, log_raw):
         os.environ["NADIRCLAW_AUTH_TOKEN"] = token
     if log_raw:
         os.environ["NADIRCLAW_LOG_RAW"] = "true"
+    if optimize:
+        os.environ["NADIRCLAW_OPTIMIZE"] = optimize
+
+    # Imported only after the env overrides above: nadirclaw.auth reads the
+    # token once at import.
+    from nadirclaw.auth import is_loopback
+    from nadirclaw.settings import settings
+
+    if not is_loopback(host) and not settings.AUTH_TOKEN:
+        raise click.UsageError(
+            f"Refusing to listen on {host} without an auth token: anyone who can "
+            "reach this port could spend your provider credentials and read your "
+            "request logs. Set NADIRCLAW_AUTH_TOKEN (or pass --token), or bind 127.0.0.1."
+        )
 
     log_level = "debug" if verbose else "info"
     logging.basicConfig(
@@ -73,15 +99,15 @@ def serve(port, simple_model, complex_model, models, token, verbose, log_raw):
 
     import uvicorn
 
-    from nadirclaw.settings import settings
-
     actual_port = port or settings.PORT
-    click.echo(f"Starting NadirClaw on port {actual_port}...")
+    click.echo(f"Starting NadirClaw on {host}:{actual_port}...")
     click.echo(f"  Simple model:  {settings.SIMPLE_MODEL}")
     click.echo(f"  Complex model: {settings.COMPLEX_MODEL}")
+    if settings.OPTIMIZE != "off":
+        click.echo(f"  Optimize:      {settings.OPTIMIZE}")
     uvicorn.run(
         "nadirclaw.server:app",
-        host="0.0.0.0",
+        host=host,
         port=actual_port,
         log_level=log_level,
     )
@@ -91,38 +117,108 @@ def serve(port, simple_model, complex_model, models, token, verbose, log_raw):
 @click.argument("prompt", nargs=-1, required=True)
 @click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]), help="Output format")
 def classify(prompt, fmt):
-    """Classify a prompt as simple or complex (no server needed)."""
+    """Classify a prompt with the configured analyzer (no server needed).
+
+    Honors NADIRCLAW_COMPLEXITY_ANALYZER (binary | distilbert).
+    """
+    import asyncio
     import logging
 
     logging.basicConfig(level=logging.WARNING)
 
-    from nadirclaw.classifier import BinaryComplexityClassifier
+    from nadirclaw.classifier import get_classifier
     from nadirclaw.settings import settings
 
     prompt_text = " ".join(prompt)
-    classifier = BinaryComplexityClassifier()
-    is_complex, confidence = classifier.classify(prompt_text)
+    classifier = get_classifier()
+    result = asyncio.run(classifier.analyze(text=prompt_text))
 
-    tier = "complex" if is_complex else "simple"
-    score = classifier._confidence_to_score(is_complex, confidence)
+    tier = result.get("tier_name") or "simple"
+    confidence = float(result.get("confidence") or 0.0)
+    score = float(result.get("complexity_score") or 0.0)
+    analyzer_type = result.get("analyzer_type", "binary")
 
-    # Pick model from explicit tier config
-    model = settings.COMPLEX_MODEL if is_complex else settings.SIMPLE_MODEL
+    if tier == "complex":
+        model = settings.COMPLEX_MODEL
+    elif tier == "mid":
+        model = settings.MID_MODEL
+    else:
+        model = settings.SIMPLE_MODEL
 
     if fmt == "json":
         click.echo(json.dumps({
             "tier": tier,
-            "is_complex": is_complex,
+            # Kept for backward compatibility with pre-3-class-analyzer
+            # scripts. "mid" counts as not-complex.
+            "is_complex": tier == "complex",
+            "analyzer": analyzer_type,
             "confidence": round(confidence, 4),
             "score": round(score, 4),
             "model": model,
             "prompt": prompt_text,
         }))
     else:
+        click.echo(f"Analyzer:   {analyzer_type}")
         click.echo(f"Tier:       {tier}")
         click.echo(f"Confidence: {confidence:.4f}")
         click.echo(f"Score:      {score:.4f}")
         click.echo(f"Model:      {model}")
+
+
+@main.command("optimize")
+@click.argument("file", type=click.Path(exists=True), required=False)
+@click.option("--mode", default="safe", type=click.Choice(["safe", "aggressive"]),
+              help="Optimization mode")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]),
+              help="Output format")
+def optimize_cmd(file, mode, fmt):
+    """Test context optimization on a file (or stdin). Dry-run — shows before/after."""
+    import sys
+
+    from nadirclaw.optimize import optimize_messages
+
+    if file:
+        with open(file) as f:
+            content = f.read()
+    else:
+        if sys.stdin.isatty():
+            click.echo("Reading from stdin (Ctrl-D to end)...")
+        content = sys.stdin.read()
+
+    # Try to parse as JSON messages array, or wrap in a single user message
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict) and "messages" in parsed:
+            messages = parsed["messages"]
+        elif isinstance(parsed, list):
+            messages = parsed
+        else:
+            messages = [{"role": "user", "content": content}]
+    except json.JSONDecodeError:
+        messages = [{"role": "user", "content": content}]
+
+    result = optimize_messages(messages, mode=mode)
+
+    if fmt == "json":
+        click.echo(json.dumps({
+            "mode": result.mode,
+            "original_tokens": result.original_tokens,
+            "optimized_tokens": result.optimized_tokens,
+            "tokens_saved": result.tokens_saved,
+            "savings_pct": round(result.tokens_saved / max(result.original_tokens, 1) * 100, 1),
+            "optimizations_applied": result.optimizations_applied,
+            "messages": result.messages,
+        }, indent=2))
+    else:
+        click.echo(f"Mode:          {result.mode}")
+        click.echo(f"Original:      ~{result.original_tokens} tokens")
+        click.echo(f"Optimized:     ~{result.optimized_tokens} tokens")
+        savings_pct = result.tokens_saved / max(result.original_tokens, 1) * 100
+        click.echo(f"Saved:         ~{result.tokens_saved} tokens ({savings_pct:.1f}%)")
+        if result.optimizations_applied:
+            click.echo(f"Transforms:    {', '.join(result.optimizations_applied)}")
+        else:
+            click.echo("Transforms:    (none applied)")
 
 
 @main.command()
@@ -136,6 +232,8 @@ def status():
     click.echo("NadirClaw Status")
     click.echo("-" * 40)
     click.echo(f"Simple model:  {settings.SIMPLE_MODEL}")
+    if settings.has_mid_tier:
+        click.echo(f"Mid model:     {settings.MID_MODEL}")
     click.echo(f"Complex model: {settings.COMPLEX_MODEL}")
     if settings.has_explicit_tiers:
         click.echo("Tier config:   explicit (env vars)")
@@ -171,15 +269,94 @@ def status():
         click.echo("\nServer:        NOT RUNNING")
 
 
+@main.command("update-models")
+@click.option("--output", type=click.Path(path_type=Path), default=None,
+              help="Metadata file to write (default: ~/.nadirclaw/models.json)")
+@click.option("--source-url", default=None,
+              help="Optional registry JSON URL to merge before writing")
+@click.option("--dry-run", is_flag=True, help="Show what would be written without saving")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]),
+              help="Output format")
+def update_models(output, source_url, dry_run, fmt):
+    """Refresh local model metadata used by the router."""
+    import urllib.error
+    import urllib.request
+
+    from nadirclaw.model_metadata import (
+        default_metadata_path,
+        local_metadata_path,
+        parse_model_metadata,
+        write_model_metadata,
+    )
+    from nadirclaw.routing import BUILTIN_MODEL_REGISTRY
+
+    output_path = output or default_metadata_path()
+    models = {
+        model: dict(info)
+        for model, info in sorted(BUILTIN_MODEL_REGISTRY.items())
+    }
+    env_source = os.getenv("NADIRCLAW_MODEL_REGISTRY_URL", "")
+    source = source_url or env_source
+    if source and not source.startswith(("http://", "https://")):
+        raise click.ClickException(f"Source URL must use http(s): {source}")
+
+    if source:
+        max_bytes = 10 * 1024 * 1024  # 10 MiB cap on registry payload
+        try:
+            with urllib.request.urlopen(source, timeout=15) as resp:
+                raw = resp.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise click.ClickException(
+                    f"Registry payload exceeds {max_bytes} bytes: {source}"
+                )
+            remote_payload = json.loads(raw)
+            remote_models = parse_model_metadata(remote_payload)
+        except (OSError, ValueError, urllib.error.URLError) as e:
+            raise click.ClickException(str(e)) from e
+        for model, info in remote_models.items():
+            models[model] = {**models.get(model, {}), **info}
+
+    if not dry_run:
+        write_model_metadata(models, output_path, source=source or "builtin")
+
+    result = {
+        "path": str(output_path),
+        "local_override_path": str(local_metadata_path()),
+        "model_count": len(models),
+        "dry_run": dry_run,
+        "source": source or "builtin",
+        "models": list(models.keys()),
+    }
+
+    if fmt == "json":
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    action = "Would write" if dry_run else "Updated"
+    plural = "entry" if len(models) == 1 else "entries"
+    click.echo(f"{action} {len(models)} model metadata {plural}")
+    click.echo(f"Path: {output_path}")
+    click.echo(f"Source: {source or 'builtin'}")
+    click.echo(f"Local overrides: {local_metadata_path()}")
+    if models:
+        click.echo("Sample models:")
+        for model in list(models.keys())[:5]:
+            click.echo(f"  - {model}")
+
+
 @main.command()
 @click.option("--since", default=None, help="Time filter: '24h', '7d', '2025-02-01'")
 @click.option("--model", default=None, help="Filter by model name (substring match)")
 @click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]), help="Output format")
 @click.option("--export", "export_path", default=None, type=click.Path(), help="Export report to file")
-def report(since, model, fmt, export_path):
+@click.option("--by-model", is_flag=True, help="Show per-model cost breakdown")
+@click.option("--by-day", is_flag=True, help="Show per-day cost breakdown")
+def report(since, model, fmt, export_path, by_model, by_day):
     """Show a summary report of request logs (reads SQLite first, falls back to JSONL)."""
     from nadirclaw.report import (
+        format_cost_breakdown_text,
         format_report_text,
+        generate_cost_breakdown,
         generate_report,
         load_log_entries,
         load_log_entries_sqlite,
@@ -208,12 +385,19 @@ def report(since, model, fmt, export_path):
     else:
         entries = load_log_entries(jsonl_path, since=since_dt, model_filter=model)
 
-    report_data = generate_report(entries)
-
-    if fmt == "json":
-        output = json.dumps(report_data, indent=2, default=str)
+    if by_model or by_day:
+        # Cost breakdown mode
+        breakdown_data = generate_cost_breakdown(entries, by_model=by_model, by_day=by_day)
+        if fmt == "json":
+            output = json.dumps(breakdown_data, indent=2, default=str)
+        else:
+            output = format_cost_breakdown_text(breakdown_data)
     else:
-        output = format_report_text(report_data)
+        report_data = generate_report(entries)
+        if fmt == "json":
+            output = json.dumps(report_data, indent=2, default=str)
+        else:
+            output = format_report_text(report_data)
 
     if export_path:
         Path(export_path).write_text(output)
@@ -360,20 +544,136 @@ def cache(fmt):
     click.echo(f"  Lookups:    {data.get('total_lookups', 0)}")
 
 
+@main.command()
+@click.option("--format", "fmt", default="csv", type=click.Choice(["csv", "jsonl"]), help="Export format")
+@click.option("--since", default=None, help="Time filter: '24h', '7d', '2025-02-01'")
+@click.option("--model", default=None, help="Filter by model name (substring match)")
+@click.option("--output", "-o", "output_path", default=None, type=click.Path(), help="Output file (default: stdout)")
+def export(fmt, since, model, output_path):
+    """Export request logs for offline analysis."""
+    import csv
+    import io
+
+    from nadirclaw.report import load_log_entries, load_log_entries_sqlite, parse_since
+    from nadirclaw.settings import settings
+
+    db_path = settings.LOG_DIR / "requests.db"
+    jsonl_path = settings.LOG_DIR / "requests.jsonl"
+
+    if not db_path.exists() and not jsonl_path.exists():
+        click.echo("No log file found. Start the server and make some requests first.")
+        return
+
+    since_dt = None
+    if since:
+        try:
+            since_dt = parse_since(since)
+        except ValueError as e:
+            click.echo(f"Error: {e}")
+            raise SystemExit(1)
+
+    # Prefer SQLite
+    if db_path.exists():
+        entries = load_log_entries_sqlite(db_path, since=since_dt, model_filter=model)
+    else:
+        entries = load_log_entries(jsonl_path, since=since_dt, model_filter=model)
+
+    if not entries:
+        click.echo("No matching entries found.")
+        return
+
+    if fmt == "csv":
+        # Determine columns from first entry
+        columns = list(entries[0].keys())
+
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(entry)
+        output = buf.getvalue()
+    else:
+        # JSONL
+        lines = [json.dumps(entry, default=str) for entry in entries]
+        output = "\n".join(lines) + "\n"
+
+    if output_path:
+        Path(output_path).write_text(output)
+        click.echo(f"Exported {len(entries)} entries to {output_path}")
+    else:
+        click.echo(output, nl=False)
+
+
 @main.command(name="build-centroids")
-def build_centroids():
-    """Regenerate centroid .npy files from prototype prompts."""
+@click.option(
+    "--embedding-backend", default=None,
+    help="Embedding backend: sentence-transformers (default) or ollama.",
+)
+@click.option(
+    "--embedding-model", default=None,
+    help="Embedding model ID (default: all-MiniLM-L6-v2 for sentence-transformers).",
+)
+@click.option(
+    "--embedding-api-base", default=None,
+    help="Base URL for the embedding API (used by the ollama backend).",
+)
+@click.option(
+    "--output-dir", default=None, type=click.Path(path_type=Path),
+    help=(
+        "Directory to write centroid files (default: package directory). "
+        "Set NADIRCLAW_CENTROID_DIR to the same path when using the server."
+    ),
+)
+def build_centroids(embedding_backend, embedding_model, embedding_api_base, output_dir):
+    """Regenerate centroid .npy files and metadata from prototype prompts.
+
+    By default, writes to the package directory using the configured embedding
+    backend and model (sentence-transformers/all-MiniLM-L6-v2 unless overridden
+    by env vars or the CLI flags below).
+
+    Examples::
+
+        # Default: rebuild package centroids with all-MiniLM-L6-v2
+        nadirclaw build-centroids
+
+        # Custom backend: build nomic-embed-text centroids into ~/.nadirclaw/centroids/nomic
+        nadirclaw build-centroids \\
+          --embedding-backend ollama \\
+          --embedding-model nomic-embed-text \\
+          --embedding-api-base http://127.0.0.1:11434 \\
+          --output-dir ~/.nadirclaw/centroids/nomic
+
+    After building custom centroids, point the server at them::
+
+        NADIRCLAW_CENTROID_DIR=~/.nadirclaw/centroids/nomic \\
+        NADIRCLAW_EMBEDDING_BACKEND=ollama \\
+        NADIRCLAW_EMBEDDING_MODEL=nomic-embed-text \\
+        nadirclaw serve
+    """
+    import hashlib
     import logging
+    from datetime import datetime, timezone
 
     import numpy as np
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    from nadirclaw.encoder import get_shared_encoder_sync
+    from nadirclaw.encoder import _build_encoder, _reset_shared_encoder
     from nadirclaw.prototypes import COMPLEX_PROTOTYPES, SIMPLE_PROTOTYPES
+    from nadirclaw.settings import settings
 
-    click.echo("Loading encoder...")
-    encoder = get_shared_encoder_sync()
+    backend = embedding_backend or settings.EMBEDDING_BACKEND
+    model_id = embedding_model or settings.EMBEDDING_MODEL
+    api_base = embedding_api_base or settings.EMBEDDING_API_BASE
+
+    # Ensure this command does not reuse an encoder built with prior settings.
+    _reset_shared_encoder()
+
+    click.echo(f"Loading encoder ({backend}/{model_id})...")
+    try:
+        encoder = _build_encoder(backend, model_id, api_base)
+    except (ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Encoding {len(SIMPLE_PROTOTYPES)} simple prototypes...")
     simple_embs = encoder.encode(SIMPLE_PROTOTYPES, show_progress_bar=False)
@@ -385,16 +685,44 @@ def build_centroids():
     complex_centroid = complex_embs.mean(axis=0)
     complex_centroid = complex_centroid / np.linalg.norm(complex_centroid)
 
-    pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    simple_path = os.path.join(pkg_dir, "simple_centroid.npy")
-    complex_path = os.path.join(pkg_dir, "complex_centroid.npy")
+    dim = int(simple_centroid.shape[0])
 
-    np.save(simple_path, simple_centroid.astype(np.float32))
-    np.save(complex_path, complex_centroid.astype(np.float32))
+    # Determine output directory
+    if output_dir:
+        out_dir = Path(output_dir).expanduser()
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+
+    simple_path = out_dir / "simple_centroid.npy"
+    complex_path = out_dir / "complex_centroid.npy"
+    meta_path = out_dir / "centroid_metadata.json"
+
+    np.save(str(simple_path), simple_centroid.astype(np.float32))
+    np.save(str(complex_path), complex_centroid.astype(np.float32))
+
+    # Prototype hash for traceability (short prefix for readability)
+    proto_content = "\n".join(sorted(SIMPLE_PROTOTYPES + COMPLEX_PROTOTYPES))
+    proto_hash = "sha256:" + hashlib.sha256(proto_content.encode()).hexdigest()[:16]
+
+    metadata = {
+        "schema_version": 1,
+        "embedding_backend": backend,
+        "embedding_model": model_id,
+        "dimension": dim,
+        "simple_count": len(SIMPLE_PROTOTYPES),
+        "complex_count": len(COMPLEX_PROTOTYPES),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "prototypes_hash": proto_hash,
+    }
+    meta_path.write_text(json.dumps(metadata, indent=2))
 
     click.echo(f"\nSaved: {simple_path}")
     click.echo(f"Saved: {complex_path}")
-    click.echo(f"Centroid dimension: {simple_centroid.shape[0]}")
+    click.echo(f"Saved: {meta_path}")
+    click.echo(f"Backend:   {backend}")
+    click.echo(f"Model:     {model_id}")
+    click.echo(f"Dimension: {dim}")
 
 
 @main.group()
@@ -999,6 +1327,435 @@ api_key = "local"
 
 
 @main.group()
+def openwebui():
+    """Open WebUI integration commands."""
+    pass
+
+
+@openwebui.command()
+def onboard():
+    """Show setup instructions for Open WebUI integration."""
+    from nadirclaw.settings import settings
+
+    url = f"http://localhost:{settings.PORT}/v1"
+
+    click.echo("\nOpen WebUI + NadirClaw Setup")
+    click.echo("=" * 50)
+    click.echo()
+    click.echo("1. Start NadirClaw:")
+    click.echo(f"   nadirclaw serve")
+    click.echo()
+    click.echo("2. In Open WebUI, go to:")
+    click.echo("   Admin Settings → Connections → OpenAI → Add Connection")
+    click.echo()
+    click.echo("3. Enter:")
+    click.echo(f"   URL:     {url}")
+    click.echo(f"   API Key: local")
+    click.echo()
+    click.echo("4. Select the 'auto' model in your chat — NadirClaw routes")
+    click.echo("   each prompt to the right model automatically.")
+    click.echo()
+    click.echo("Available models:")
+    click.echo("   auto      Smart routing (default)")
+    click.echo("   eco       Always use cheap model")
+    click.echo("   premium   Always use best model")
+    click.echo()
+    click.echo(f"Verify: curl {url}/models")
+    click.echo()
+
+
+@main.group()
+def continue_dev():
+    """Continue (continue.dev) integration commands."""
+    pass
+
+
+@continue_dev.command()
+def onboard():
+    """Auto-configure Continue to use NadirClaw as a provider."""
+    from nadirclaw.settings import settings
+
+    config_dir = Path.home() / ".continue"
+    config_path = config_dir / "config.json"
+
+    # Backup existing config if present
+    existing = {}
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                existing = json.load(f)
+            backup_path = config_path.with_suffix(
+                f".backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+            )
+            shutil.copy2(config_path, backup_path)
+            click.echo(f"Backed up existing config to {backup_path}")
+        except Exception as e:
+            click.echo(f"Warning: could not read existing config: {e}")
+
+    # Build the NadirClaw model entry
+    nadirclaw_model = {
+        "title": "NadirClaw Auto",
+        "provider": "openai",
+        "model": "auto",
+        "apiBase": f"http://localhost:{settings.PORT}/v1",
+        "apiKey": "local",
+    }
+
+    # Merge into existing config
+    if "models" not in existing:
+        existing["models"] = []
+
+    # Remove any existing NadirClaw entries
+    existing["models"] = [
+        m for m in existing["models"]
+        if not (m.get("apiBase", "").startswith(f"http://localhost:{settings.PORT}"))
+    ]
+    existing["models"].insert(0, nadirclaw_model)
+
+    # Write config
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(existing, f, indent=2)
+
+    click.echo(f"\nWrote Continue config to {config_path}")
+    click.echo(f"\nNadirClaw added as the first model in Continue.")
+    click.echo(f"  Model: auto (smart routing)")
+    click.echo(f"  API Base: http://localhost:{settings.PORT}/v1")
+    click.echo("\nNext steps:")
+    click.echo("  1. Start NadirClaw:  nadirclaw serve")
+    click.echo("  2. Open Continue in your editor (VS Code / JetBrains)")
+    click.echo("  3. Select 'NadirClaw Auto' from the model dropdown")
+
+
+# Rename the Click group to use "continue" as CLI name (Python keyword workaround)
+continue_dev.name = "continue"
+
+
+@main.group()
+def cursor():
+    """Cursor editor integration commands."""
+    pass
+
+
+@cursor.command()
+def onboard():
+    """Auto-configure Cursor to use NadirClaw as an OpenAI-compatible provider."""
+    from nadirclaw.settings import settings
+
+    cursor_dir = Path.home() / ".cursor"
+    config_path = cursor_dir / "mcp.json"
+
+    click.echo("\nCursor + NadirClaw Setup")
+    click.echo("=" * 50)
+    click.echo()
+    click.echo("Cursor supports OpenAI-compatible providers natively.")
+    click.echo("Follow these steps to connect NadirClaw:\n")
+    click.echo("1. Start NadirClaw:")
+    click.echo("   nadirclaw serve")
+    click.echo()
+    click.echo("2. In Cursor, go to:")
+    click.echo("   Settings → Models → OpenAI API Key")
+    click.echo()
+    click.echo("3. Enter these values:")
+    click.echo(f"   API Key:      local")
+    click.echo(f"   Base URL:     http://localhost:{settings.PORT}/v1")
+    click.echo(f"   Model name:   auto")
+    click.echo()
+    click.echo("4. Click 'Verify' to test the connection, then save.")
+    click.echo()
+    click.echo("Available models:")
+    click.echo("   auto      Smart routing (recommended)")
+    click.echo("   eco       Always use cheap model")
+    click.echo("   premium   Always use best model")
+    click.echo()
+    click.echo(f"Verify: curl http://localhost:{settings.PORT}/v1/models")
+    click.echo()
+
+
+@main.group()
+def claude():
+    """Claude Code seamless integration."""
+    pass
+
+
+@claude.command("onboard")
+@click.option(
+    "--base-url",
+    default=None,
+    help="ANTHROPIC_BASE_URL to write into Claude Code settings "
+    "(default: http://localhost:<PORT>). Claude Code appends `/v1/messages` "
+    "itself, so do NOT include a /v1 suffix.",
+)
+@click.option(
+    "--api-key",
+    default="local",
+    show_default=True,
+    help="ANTHROPIC_API_KEY value to write into Claude Code settings.",
+)
+@click.option(
+    "--no-daemon",
+    is_flag=True,
+    help="Skip installing the launchd/systemd auto-start unit.",
+)
+@click.option(
+    "--no-settings",
+    is_flag=True,
+    help="Skip editing ~/.claude/settings.json.",
+)
+@click.option(
+    "--detect-only",
+    is_flag=True,
+    help="Show detected tier mapping and exit without writing anything.",
+)
+@click.option(
+    "--interactive/--no-interactive",
+    "-i/-I",
+    default=None,
+    help="Pick a model for each tier from a menu. Auto-enabled when no "
+    "real config or live API result is available.",
+)
+@click.option(
+    "--default-profile",
+    type=click.Choice(["nadir-auto", "nadir-eco", "nadir-premium", "nadir-reasoning", "nadir-free", "off"]),
+    default=None,
+    help="Set ANTHROPIC_MODEL in settings.json so every `claude` launch routes "
+    "through this profile by default. 'off' leaves Claude Code's picker in "
+    "charge (proxy will just pass through whatever it sends).",
+)
+def claude_onboard(base_url, api_key, no_daemon, no_settings, detect_only, interactive, default_profile):
+    """Make Claude Code talk to NadirClaw automatically.
+
+    Detects the models Claude Code is configured to use, maps them into
+    NadirClaw's routing tiers, persists ANTHROPIC_BASE_URL into Claude Code's
+    settings, and installs a user-scope auto-start unit so the proxy is always
+    up when you run `claude`.
+    """
+    from nadirclaw.claude_integration import (
+        CLAUDE_SETTINGS_FILE,
+        detect_models,
+        gather_candidate_models,
+        install_daemon,
+        interactive_pick_models,
+        patch_claude_settings,
+        update_env_file,
+    )
+    from nadirclaw.settings import settings as nadir_settings
+
+    detected = detect_models()
+    click.echo("Detected Claude Code models:")
+    for tier in ("simple", "mid", "complex", "reasoning"):
+        value = getattr(detected, tier)
+        click.echo(f"  {tier:<10} {value or '—'}")
+    click.echo(f"  sources    {', '.join(detected.sources) or '—'}")
+
+    # Auto-enable interactive when detection only saw the hardcoded fallback
+    # (i.e. neither Claude Code config nor the live Anthropic API produced
+    # anything). Skip auto when --detect-only or stdin isn't a tty.
+    should_prompt = interactive
+    if should_prompt is None and not detect_only:
+        only_defaults = detected.sources == ["defaults"]
+        should_prompt = only_defaults and sys.stdin.isatty()
+
+    if should_prompt:
+        pool = gather_candidate_models()
+        detected = interactive_pick_models(pool, defaults=detected)
+        click.echo("Final tier mapping:")
+        for tier in ("simple", "mid", "complex", "reasoning"):
+            value = getattr(detected, tier)
+            click.echo(f"  {tier:<10} {value or '—'}")
+
+    # Resolve the default routing profile (what Claude Code sends as `model`).
+    # Without this, Claude Code defaults to opus/sonnet/haiku and the proxy
+    # just passes through — no smart routing happens.
+    chosen_profile: Optional[str] = default_profile
+    if chosen_profile is None and should_prompt and not detect_only:
+        click.echo(
+            "\nWhich profile should `claude` use by default?\n"
+            "  [1] nadir-auto      — smart routing per prompt (recommended)\n"
+            "  [2] nadir-eco       — always cheapest tier\n"
+            "  [3] nadir-premium   — always strongest tier\n"
+            "  [4] nadir-reasoning — always reasoning tier\n"
+            "  [5] off             — leave Claude Code's picker in charge"
+        )
+        pick = click.prompt("  pick", default="1", show_default=True).strip()
+        chosen_profile = {
+            "1": "nadir-auto", "nadir-auto": "nadir-auto",
+            "2": "nadir-eco", "nadir-eco": "nadir-eco",
+            "3": "nadir-premium", "nadir-premium": "nadir-premium",
+            "4": "nadir-reasoning", "nadir-reasoning": "nadir-reasoning",
+            "5": "off", "off": "off",
+        }.get(pick.lower(), "nadir-auto")
+
+    if chosen_profile == "off":
+        chosen_profile = None  # don't write ANTHROPIC_MODEL
+
+    if detect_only:
+        return
+
+    env_path = update_env_file(detected)
+    click.echo(f"\nUpdated tier mapping in {env_path}")
+
+    # Claude Code expects ANTHROPIC_BASE_URL to be the bare host. It appends
+    # `/v1/messages` itself, so a `/v1` suffix here produces `/v1/v1/messages`.
+    resolved_base = base_url or f"http://localhost:{nadir_settings.PORT}"
+    resolved_base = resolved_base.rstrip("/")
+    if resolved_base.endswith("/v1"):
+        resolved_base = resolved_base[:-3]
+
+    if no_settings:
+        click.echo("Skipped editing Claude Code settings (--no-settings).")
+    else:
+        patched = patch_claude_settings(
+            resolved_base, api_key=api_key, default_profile=chosen_profile
+        )
+        click.echo(f"Wrote ANTHROPIC_BASE_URL={resolved_base} to {patched}")
+        if chosen_profile:
+            click.echo(f"Set ANTHROPIC_MODEL={chosen_profile} (every `claude` launch routes through this)")
+        else:
+            click.echo("Left ANTHROPIC_MODEL untouched — Claude Code's picker controls routing.")
+
+    if no_daemon:
+        click.echo("Skipped daemon install (--no-daemon).")
+    else:
+        installed = install_daemon(port=nadir_settings.PORT)
+        if installed:
+            click.echo(f"Installed auto-start unit at {installed}")
+        else:
+            click.echo(
+                "Auto-start unit not installed (unsupported OS). "
+                "Run `nadirclaw serve` manually or use `nadirclaw claude shim install`."
+            )
+
+    click.echo("\nDone. Open a new shell and run `claude` — it will route through NadirClaw.")
+    click.echo("Inside Claude Code, `/model` lists nadir-auto / nadir-eco / nadir-premium / nadir-reasoning.")
+
+
+@claude.command("shim")
+@click.argument("action", type=click.Choice(["install", "uninstall", "status"]), default="install")
+def claude_shim(action):
+    """Install a lazy-start `claude` wrapper on PATH.
+
+    The wrapper checks whether NadirClaw is already serving on its port; if not,
+    it starts the proxy in the background, exports ANTHROPIC_BASE_URL, and execs
+    the real `claude` binary. No background daemon, no settings.json edit.
+    """
+    from nadirclaw.claude_integration import (
+        SHIM_DIR,
+        SHIM_PATH,
+        install_shim,
+        uninstall_shim,
+    )
+    from nadirclaw.settings import settings as nadir_settings
+
+    if action == "status":
+        if SHIM_PATH.exists():
+            click.echo(f"Shim installed at {SHIM_PATH}")
+        else:
+            click.echo("Shim not installed.")
+        on_path = os.environ.get("PATH", "").split(os.pathsep)
+        click.echo(f"On PATH: {'yes' if str(SHIM_DIR) in on_path else 'no'}")
+        return
+
+    if action == "uninstall":
+        if uninstall_shim():
+            click.echo(f"Removed {SHIM_PATH}")
+        else:
+            click.echo("Shim was not installed.")
+        return
+
+    path = install_shim(port=nadir_settings.PORT)
+    click.echo(f"Installed shim at {path}")
+    click.echo("\nAdd this to your shell rc so `claude` resolves to the shim:")
+    click.echo(f'  export PATH="{path.parent}:$PATH"')
+    click.echo("\nThen just run `claude` — the shim will start NadirClaw on demand.")
+
+
+@claude.command("read-hook")
+@click.option("--explain", is_flag=True, help="Print the decision reason to stderr")
+def claude_read_hook(explain):
+    """Claude Code PreToolUse hook: serve a structural view for oversized Python reads.
+
+    Reads one hook event on stdin and writes the decision to stdout. Registered
+    by `nadirclaw claude hook install`; not normally run by hand.
+    """
+    from nadirclaw.read_hook import run
+
+    report = run(sys.stdin, sys.stdout)
+    if explain:
+        click.echo(json.dumps(report), err=True)
+
+
+@claude.command("hook")
+@click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
+def claude_hook(action):
+    """Install, remove, or check the Claude Code Read hook."""
+    from nadirclaw.claude_integration import (
+        CLAUDE_SETTINGS_FILE,
+        READ_HOOK_LABEL,
+        patch_claude_read_hook,
+        unpatch_claude_read_hook,
+    )
+
+    if action == "install":
+        path = patch_claude_read_hook()
+        click.echo(f"Registered the NadirClaw Read hook in {path}")
+        click.echo("Start a new Claude Code session for it to take effect.")
+        click.echo(
+            "Python files past Claude Code's ~25k-token read cap are now served as a "
+            "structural view with original line numbers, instead of a truncated page."
+        )
+        return
+
+    if action == "uninstall":
+        if unpatch_claude_read_hook():
+            click.echo("Removed the NadirClaw Read hook (other hooks left in place)")
+        else:
+            click.echo("No NadirClaw Read hook was installed")
+        return
+
+    installed = False
+    if CLAUDE_SETTINGS_FILE.exists():
+        try:
+            config = json.loads(CLAUDE_SETTINGS_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            config = {}
+        entries = (config.get("hooks") or {}).get("PreToolUse") or []
+        installed = any(
+            isinstance(h, dict) and h.get("statusMessage") == READ_HOOK_LABEL
+            for entry in entries if isinstance(entry, dict)
+            for h in (entry.get("hooks") or [])
+        )
+    click.echo(f"Read hook: {'installed' if installed else 'not installed'} ({CLAUDE_SETTINGS_FILE})")
+
+
+@claude.command("uninstall")
+def claude_uninstall():
+    """Remove all Claude Code integration artifacts (daemon, shim, settings entries)."""
+    from nadirclaw.claude_integration import (
+        uninstall_daemon,
+        uninstall_shim,
+        unpatch_claude_read_hook,
+        unpatch_claude_settings,
+    )
+
+    removed_daemon = uninstall_daemon()
+    for p in removed_daemon:
+        click.echo(f"Removed daemon unit {p}")
+
+    if uninstall_shim():
+        click.echo("Removed claude shim")
+
+    if unpatch_claude_settings():
+        click.echo("Cleared ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY from Claude Code settings")
+
+    if unpatch_claude_read_hook():
+        click.echo("Removed the NadirClaw Read hook from Claude Code settings")
+
+    if not removed_daemon:
+        click.echo("(no daemon unit was installed)")
+
+
+@main.group()
 def ollama():
     """Ollama discovery and management commands."""
     pass
@@ -1025,6 +1782,42 @@ def discover(scan_network):
         click.echo(f"  OLLAMA_API_BASE={instances[0]['url']}")
 
 
+def _is_anthropic_model(model: str) -> bool:
+    return model.startswith("claude") or model.startswith("anthropic/") or model.startswith("claude/")
+
+
+def _probe_anthropic_oauth(model: str, messages: list, token: str, timeout: int) -> str:
+    """Probe an Anthropic model with a subscription/OAuth token.
+
+    Mirrors the server's OAuth path (Authorization: Bearer + the
+    oauth-2025-04-20 beta header) so `nadirclaw test` exercises the same auth
+    the running server uses. Calling LiteLLM directly would instead send the
+    token as x-api-key, which Anthropic restricts for subscription tokens.
+    """
+    import httpx
+
+    model_id = model.removeprefix("anthropic/").removeprefix("claude/")
+    body = {"model": model_id, "messages": messages, "max_tokens": 10}
+    resp = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+            "content-type": "application/json",
+        },
+        json=body,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return "".join(
+        b.get("text", "")
+        for b in payload.get("content", []) or []
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
 @main.command()
 @click.option("--simple-model", default=None, help="Override simple model for this test")
 @click.option("--complex-model", default=None, help="Override complex model for this test")
@@ -1036,12 +1829,18 @@ def test(simple_model, complex_model, timeout):
     """
     import time as _time
 
+    from nadirclaw.credentials import get_credential
     from nadirclaw.settings import settings
 
     s_model = simple_model or settings.SIMPLE_MODEL
     c_model = complex_model or settings.COMPLEX_MODEL
 
     probe = [{"role": "user", "content": "Reply with the single word: ok"}]
+
+    # Subscription/OAuth tokens (sk-ant-oat*) must use Bearer + the oauth beta
+    # header, exactly as the server does — not LiteLLM's x-api-key path.
+    anthropic_token = get_credential("anthropic")
+    use_anthropic_oauth = bool(anthropic_token and "sk-ant-oat" in anthropic_token)
 
     models_to_test = [("simple", s_model)]
     if c_model != s_model:
@@ -1056,16 +1855,19 @@ def test(simple_model, complex_model, timeout):
         click.echo(f"  {'─' * 46}")
         t0 = _time.time()
         try:
-            import litellm
+            if use_anthropic_oauth and _is_anthropic_model(model):
+                content = _probe_anthropic_oauth(model, probe, anthropic_token, timeout)
+            else:
+                import litellm
 
-            resp = litellm.completion(
-                model=model,
-                messages=probe,
-                max_tokens=10,
-                timeout=timeout,
-            )
+                resp = litellm.completion(
+                    model=model,
+                    messages=probe,
+                    max_tokens=10,
+                    timeout=timeout,
+                )
+                content = resp.choices[0].message.content or ""
             latency = int((_time.time() - t0) * 1000)
-            content = resp.choices[0].message.content or ""
             click.echo(f"  Status:   OK")
             click.echo(f"  Latency:  {latency}ms")
             click.echo(f"  Reply:    {content.strip()!r}")

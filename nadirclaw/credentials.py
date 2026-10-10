@@ -2,6 +2,8 @@
 
 Stores provider API keys/tokens in ~/.nadirclaw/credentials.json.
 Resolution chain: OpenClaw stored token (optional) → NadirClaw stored token → env var.
+Set NADIRCLAW_PREFER_ENV_KEYS=1 to move the env var to the front — see
+_prefer_env_credentials().
 Supports OAuth tokens with automatic refresh for all providers.
 OpenClaw integration is optional — NadirClaw works standalone.
 """
@@ -25,6 +27,7 @@ _ENV_VAR_MAP = {
     "google": "GOOGLE_API_KEY",
     "cohere": "COHERE_API_KEY",
     "mistral": "MISTRAL_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
 }
 
 # Alternative env vars checked as fallback (order matters)
@@ -49,6 +52,7 @@ _MODEL_PROVIDER_PATTERNS = {
     "ollama/": "ollama",
     "cohere/": "cohere",
     "mistral/": "mistral",
+    "minimax/": "minimax",
     "together_ai/": "together_ai",
     "replicate/": "replicate",
 }
@@ -157,6 +161,160 @@ def remove_credential(provider: str) -> bool:
     return False
 
 
+# OpenClaw provider name → NadirClaw provider name mapping.
+# OpenClaw uses different naming conventions for some providers.
+_OPENCLAW_PROVIDER_MAP = {
+    "google-gemini-cli": "google",
+    "openai-codex": "openai-codex",
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "cohere": "cohere",
+    "mistral": "mistral",
+}
+
+# Reverse map: NadirClaw name → possible OpenClaw names
+_NADIRCLAW_TO_OPENCLAW = {}
+for _oc, _nc in _OPENCLAW_PROVIDER_MAP.items():
+    _NADIRCLAW_TO_OPENCLAW.setdefault(_nc, []).append(_oc)
+
+
+def _openclaw_auth_profiles_path() -> Path:
+    """Return the path to OpenClaw's auth-profiles.json."""
+    return Path.home() / ".openclaw" / "agents" / "main" / "agent" / "auth-profiles.json"
+
+
+def _check_openclaw_with_refresh(provider: str) -> Optional[str]:
+    """Check OpenClaw auth-profiles for a token, refreshing if expired.
+
+    OpenClaw stores OAuth tokens with 'access', 'refresh', 'expires' (ms) fields.
+    Reads them and auto-refreshes expired tokens, saving the refreshed token
+    into NadirClaw's own credential store.
+
+    Important: OpenClaw OAuth tokens are issued by OpenClaw's own OAuth client
+    (via @mariozechner/pi-ai). Token refresh requires the same client_id that
+    issued the token. If NadirClaw's client_id differs, refresh will fail with 401.
+    In that case, we re-read the file (OpenClaw may have refreshed it), and if
+    still expired, return the stale token with a helpful error message.
+    """
+    auth_profiles_path = _openclaw_auth_profiles_path()
+    if not auth_profiles_path.exists():
+        return None
+
+    # Determine which OpenClaw provider names to look for
+    openclaw_names = _NADIRCLAW_TO_OPENCLAW.get(provider, [provider])
+
+    try:
+        data = json.loads(auth_profiles_path.read_text())
+        profiles = data.get("profiles", {})
+        for profile in profiles.values():
+            if profile.get("provider") not in openclaw_names:
+                continue
+
+            if profile.get("type") != "oauth":
+                # API key profile — return the key directly
+                return profile.get("key") or profile.get("access")
+
+            access_token = profile.get("access")
+            refresh_tok = profile.get("refresh")
+            # OpenClaw stores expires in milliseconds
+            expires_ms = profile.get("expires", 0)
+            expires_at = expires_ms / 1000  # convert to seconds
+
+            if not access_token:
+                continue
+
+            # Check if token is still valid (with 60s buffer)
+            if time.time() < (expires_at - 60):
+                return access_token
+
+            # Token expired — try to refresh
+            if not refresh_tok:
+                logger.warning("OpenClaw token expired for %s, no refresh token", provider)
+                return access_token
+
+            refresh_func = _get_refresh_func(provider)
+            if not refresh_func:
+                logger.warning("No refresh function for provider %s (OpenClaw token)", provider)
+                return access_token
+
+            logger.info("Refreshing expired OpenClaw token for %s...", provider)
+            try:
+                # Pass the OpenClaw profile's clientId if available, so refresh
+                # uses the same client_id that issued the token.
+                openclaw_client_id = profile.get("clientId")
+                if openclaw_client_id:
+                    token_data = refresh_func(refresh_tok, client_id=openclaw_client_id)
+                else:
+                    token_data = refresh_func(refresh_tok)
+                new_access = token_data["access_token"]
+                new_refresh = token_data.get("refresh_token", refresh_tok)
+                new_expires_in = token_data.get("expires_in", 3600)
+                # Save refreshed token into NadirClaw's own store
+                save_oauth_credential(provider, new_access, new_refresh, new_expires_in)
+                logger.info("OpenClaw token refreshed for %s (expires in %ds)", provider, new_expires_in)
+                return new_access
+            except Exception as e:
+                err_str = str(e)
+                if "401" in err_str or "unauthorized" in err_str.lower():
+                    # Client ID mismatch — the token was issued by OpenClaw's
+                    # OAuth client (pi-ai) which uses a different client_id.
+                    # Re-read the file: OpenClaw may have refreshed it already.
+                    try:
+                        fresh_data = json.loads(auth_profiles_path.read_text())
+                        fresh_profiles = fresh_data.get("profiles", {})
+                        for fp in fresh_profiles.values():
+                            if fp.get("provider") not in openclaw_names:
+                                continue
+                            fresh_expires = fp.get("expires", 0) / 1000
+                            if time.time() < (fresh_expires - 60) and fp.get("access"):
+                                logger.info(
+                                    "OpenClaw has a fresh token for %s (re-read from file)", provider
+                                )
+                                return fp["access"]
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
+                    logger.warning(
+                        "Cannot refresh OpenClaw token for %s: client_id mismatch (401). "
+                        "The token was issued by OpenClaw using a different OAuth client. "
+                        "Open OpenClaw to trigger a refresh, or re-authenticate: "
+                        "nadirclaw auth %s login",
+                        provider, provider,
+                    )
+                else:
+                    logger.error("Failed to refresh OpenClaw token for %s: %s", provider, e)
+                return access_token  # return stale token as last resort
+
+    except (json.JSONDecodeError, OSError, KeyError) as e:
+        logger.debug("Could not read OpenClaw auth-profiles: %s", e)
+
+    return None
+
+
+def _check_openclaw(provider: str) -> Optional[str]:
+    """Check OpenClaw legacy config (~/.openclaw/openclaw.json) for a stored token."""
+    openclaw_path = Path.home() / ".openclaw" / "openclaw.json"
+    if not openclaw_path.exists():
+        return None
+
+    openclaw_names = _NADIRCLAW_TO_OPENCLAW.get(provider, [provider])
+
+    try:
+        config = json.loads(openclaw_path.read_text())
+        auth = config.get("auth", {})
+        # Check auth profiles
+        profiles = auth.get("profiles", {})
+        for profile in profiles.values():
+            if profile.get("provider") in openclaw_names and profile.get("token"):
+                return profile["token"]
+        # Check provider-specific keys
+        keys = auth.get("keys", {})
+        env_name = _ENV_VAR_MAP.get(provider, "")
+        if env_name and keys.get(env_name):
+            return keys[env_name]
+    except (json.JSONDecodeError, OSError, KeyError):
+        pass
+    return None
 
 
 
@@ -221,21 +379,62 @@ def _maybe_refresh_oauth(provider: str, entry: dict) -> Optional[str]:
         logger.info("OAuth token refreshed for %s (expires in %ds)", provider, new_expires)
         return new_access
     except Exception as e:
-        logger.error("Failed to refresh OAuth token for %s: %s", provider, e)
-        logger.warning(
-            "Re-authenticate with: nadirclaw auth %s login", provider
-        )
+        err_str = str(e)
+        if "401" in err_str or "unauthorized" in err_str.lower():
+            logger.error(
+                "OAuth token refresh failed for %s (401 Unauthorized). "
+                "This may be a client_id mismatch if the token was issued by "
+                "another OAuth client (e.g. OpenClaw). Re-authenticate: "
+                "nadirclaw auth %s login",
+                provider, provider,
+            )
+        else:
+            logger.error("Failed to refresh OAuth token for %s: %s", provider, e)
+            logger.warning(
+                "Re-authenticate with: nadirclaw auth %s login", provider
+            )
         return None
 
 
 
 
 
+def _prefer_env_credentials() -> bool:
+    """Whether the process environment outranks stored credentials.
+
+    Off by default: a developer box should keep using the token it logged in
+    with. A server wants the opposite. A stored personal OAuth or subscription
+    token is the wrong credential for shared traffic — it carries that person's
+    rate limit — and without this flag there is no way to override it short of
+    deleting the credentials file the same machine may need for other tools.
+    """
+    return os.getenv("NADIRCLAW_PREFER_ENV_KEYS", "").lower() in ("1", "true", "yes")
+
+
+def _env_credential(provider: str) -> Optional[str]:
+    """Provider credential from the environment: primary var, then fallbacks."""
+    env_var = _ENV_VAR_MAP.get(provider)
+    if env_var:
+        val = os.getenv(env_var, "")
+        if val:
+            return val
+
+    for fallback_var in _ENV_VAR_FALLBACKS.get(provider, []):
+        val = os.getenv(fallback_var, "")
+        if val:
+            return val
+
+    return None
+
+
 def get_credential(provider: str) -> Optional[str]:
     """Resolve a credential for a provider.
 
     Resolution order:
-      1. OpenClaw stored token (~/.openclaw/openclaw.json)
+      0. Environment variable, if NADIRCLAW_PREFER_ENV_KEYS is set
+      1. OpenClaw stored token (~/.openclaw/agents/main/agent/auth-profiles.json)
+         — with automatic OAuth refresh if expired
+      1b. OpenClaw legacy (~/.openclaw/openclaw.json)
       2. NadirClaw stored token (~/.nadirclaw/credentials.json)
          — with automatic OAuth refresh if expired
       3. Environment variable
@@ -247,9 +446,21 @@ def get_credential(provider: str) -> Optional[str]:
     Returns:
         The token string, or None if no credential found.
     """
+    # 0. Environment first, when the deployment asked for it.
+    if _prefer_env_credentials():
+        token = _env_credential(provider)
+        if token:
+            return token
 
+    # 1. OpenClaw auth-profiles (with auto-refresh for OAuth tokens)
+    token = _check_openclaw_with_refresh(provider)
+    if token:
+        return token
 
-
+    # 1b. OpenClaw legacy (openclaw.json)
+    token = _check_openclaw(provider)
+    if token:
+        return token
 
     # 2. NadirClaw stored credentials (with OAuth auto-refresh)
     creds = _read_credentials()
@@ -257,18 +468,49 @@ def get_credential(provider: str) -> Optional[str]:
     if entry and entry.get("token"):
         return _maybe_refresh_oauth(provider, entry)
 
-    # 3. Environment variable (primary)
-    env_var = _ENV_VAR_MAP.get(provider)
-    if env_var:
-        val = os.getenv(env_var, "")
-        if val:
-            return val
+    # 3. Environment variable (primary, then fallbacks like GEMINI_API_KEY)
+    return _env_credential(provider)
 
-    # 4. Fallback env vars (e.g. GEMINI_API_KEY for google)
-    for fallback_var in _ENV_VAR_FALLBACKS.get(provider, []):
-        val = os.getenv(fallback_var, "")
-        if val:
-            return val
+
+def get_gemini_oauth_config(provider: str = "google") -> Optional[dict]:
+    """Return full OAuth config for Gemini if the credential is an OAuth token.
+
+    Checks both OpenClaw auth-profiles and NadirClaw credentials for OAuth
+    metadata like project_id which is required for Vertex AI mode.
+
+    Returns:
+        Dict with 'token', 'project_id' (optional), 'source' keys, or None
+        if the credential isn't an OAuth token.
+    """
+    # Check OpenClaw auth-profiles first
+    openclaw_names = _NADIRCLAW_TO_OPENCLAW.get(provider, [provider])
+    auth_profiles_path = _openclaw_auth_profiles_path()
+    if auth_profiles_path.exists():
+        try:
+            data = json.loads(auth_profiles_path.read_text())
+            profiles = data.get("profiles", {})
+            for profile in profiles.values():
+                if profile.get("provider") not in openclaw_names:
+                    continue
+                if profile.get("type") == "oauth" and profile.get("access"):
+                    return {
+                        "token": profile["access"],
+                        "project_id": profile.get("projectId") or profile.get("project_id"),
+                        "source": "openclaw",
+                    }
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass
+
+    # Check NadirClaw credentials
+    creds = _read_credentials()
+    for key in (provider, "gemini"):
+        entry = creds.get(key)
+        if entry and entry.get("source") == "oauth" and entry.get("token"):
+            return {
+                "token": entry["token"],
+                "project_id": entry.get("project_id"),
+                "source": "oauth",
+            }
 
     return None
 
@@ -278,7 +520,13 @@ def get_credential_source(provider: str) -> Optional[str]:
 
     Returns one of: "openclaw", "oauth", "setup-token", "manual", "env", or None.
     """
+    # 0. Environment first, when the deployment asked for it.
+    if _prefer_env_credentials() and _env_credential(provider):
+        return "env"
 
+    # 1. OpenClaw (auth-profiles with OAuth + legacy)
+    if _check_openclaw_with_refresh(provider) or _check_openclaw(provider):
+        return "openclaw"
 
     # 2. NadirClaw stored
     creds = _read_credentials()
@@ -286,15 +534,9 @@ def get_credential_source(provider: str) -> Optional[str]:
     if entry and entry.get("token"):
         return entry.get("source", "stored")
 
-    # 3. Env var (primary)
-    env_var = _ENV_VAR_MAP.get(provider)
-    if env_var and os.getenv(env_var, ""):
+    # 3. Env var (primary, then fallbacks)
+    if _env_credential(provider):
         return "env"
-
-    # 4. Fallback env vars
-    for fallback_var in _ENV_VAR_FALLBACKS.get(provider, []):
-        if os.getenv(fallback_var, ""):
-            return "env"
 
     return None
 

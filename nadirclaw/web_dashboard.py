@@ -39,6 +39,47 @@ def _load_recent_logs(limit: int = 200) -> List[Dict[str, Any]]:
     return entries
 
 
+# Reason bucketing matches on error_type class names for stable classification.
+# Schema: fallback_reasons entries are {"model", "error_type", "message"} (PR #47).
+_REASON_BUCKETS: Dict[str, set] = {
+    "rate_limit": {"RateLimitExhausted", "RateLimitError"},
+    "timeout": {"ReadTimeout", "ConnectTimeout", "Timeout", "TimeoutError"},
+    "connection_error": {"ConnectError", "APIConnectionError"},
+    "disconnected": {"RemoteProtocolError", "EndOfStream"},
+}
+
+
+def _classify_error_type(error_type: str) -> str:
+    """Map an error_type class name to a dashboard reason bucket."""
+    for bucket, names in _REASON_BUCKETS.items():
+        if error_type in names:
+            return bucket
+    if error_type.endswith("ServerError"):
+        return "server_error"
+    return "other"
+
+
+def compute_model_stats(completions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Aggregate per-model success/fail counts and categorized reasons.
+
+    Success = request landed on `selected_model`. Fail = every entry in
+    `fallback_reasons`, attributed to the model that actually failed.
+    """
+    stats: Dict[str, Dict[str, Any]] = {}
+    for e in completions:
+        model = e.get("selected_model", "unknown")
+        stats.setdefault(model, {"success": 0, "fail": 0, "fail_reasons": {}})
+        stats[model]["success"] += 1
+        for fr in e.get("fallback_reasons") or []:
+            fm = fr.get("model", "unknown")
+            stats.setdefault(fm, {"success": 0, "fail": 0, "fail_reasons": {}})
+            stats[fm]["fail"] += 1
+            bucket = _classify_error_type(fr.get("error_type", ""))
+            reasons = stats[fm]["fail_reasons"]
+            reasons[bucket] = reasons.get(bucket, 0) + 1
+    return stats
+
+
 @router.get("/dashboard/api/stats")
 async def dashboard_stats(
     current_user: UserSession = Depends(validate_local_auth),
@@ -88,6 +129,7 @@ async def dashboard_stats(
             "cost": e.get("cost", 0),
             "prompt": (e.get("prompt", "") or "")[:60],
             "fallback": e.get("fallback_used"),
+            "tokens_saved": e.get("tokens_saved", 0) or 0,
         })
 
     # Budget
@@ -95,6 +137,15 @@ async def dashboard_stats(
 
     # Fallback stats
     fallbacks = sum(1 for e in completions if e.get("fallback_used"))
+
+    # Model success/failure tracking from fallback_reasons (schema: PR #47).
+    model_stats = compute_model_stats(completions)
+
+    # Optimization stats
+    total_tokens_saved = sum(e.get("tokens_saved", 0) or 0 for e in completions)
+    total_original_tokens = sum(e.get("original_tokens", 0) or 0 for e in completions if e.get("original_tokens"))
+    opt_savings_pct = (total_tokens_saved / max(total_original_tokens, 1) * 100) if total_original_tokens else 0
+    optimized_requests = sum(1 for e in completions if e.get("optimization_mode") and e.get("optimization_mode") != "off")
 
     return {
         "total_requests": len(completions),
@@ -105,6 +156,12 @@ async def dashboard_stats(
         "fallback_count": fallbacks,
         "simple_model": settings.SIMPLE_MODEL,
         "complex_model": settings.COMPLEX_MODEL,
+        "optimization": {
+            "total_tokens_saved": total_tokens_saved,
+            "savings_pct": round(opt_savings_pct, 1),
+            "optimized_requests": optimized_requests,
+        },
+        "model_stats": model_stats,
     }
 
 
@@ -234,16 +291,29 @@ async function refresh() {
       legend.innerHTML += '<span style="color:' + (TIER_COLORS[tier]||'#4b5563') + '">' + tier + ' ' + count + ' (' + pct.toFixed(0) + '%)</span>  ';
     }
 
-    // Model cards
+    // Model cards (with success rate from model_stats)
+    const ms = d.model_stats || {};
     const mg = document.getElementById('model-grid');
     mg.innerHTML = '';
     for (const [name, info] of Object.entries(d.model_usage)) {
-      mg.innerHTML += '<div class="model-card"><div class="model-name">' + name + '</div><div class="model-stats">' +
-        '<div>Requests <span>' + info.requests + '</span></div>' +
-        '<div>Tokens <span>' + info.tokens.toLocaleString() + '</span></div>' +
+      const msEntry = ms[name];
+      const success = msEntry ? msEntry.success : info.requests;
+      const fail = msEntry ? msEntry.fail : 0;
+      const total = success + fail;
+      const rate = total > 0 ? (success / total * 100) : 100;
+      const rateColor = rate >= 95 ? '#34d399' : rate >= 80 ? '#fbbf24' : '#ef4444';
+      let card = '<div class="model-card"><div class="model-name">' + name + '</div><div class="model-stats">' +
+        '<div>Requests <span>' + info.requests + '</span></div>';
+      if (fail > 0) {
+        card += '<div>Success <span style="color:' + rateColor + '">' + success + '/' + total + ' (' + rate.toFixed(0) + '%)</span></div>';
+        const reasons = Object.entries(msEntry.fail_reasons || {}).map(([r,c]) => r+':'+c).join(', ');
+        if (reasons) card += '<div style="color:#6b7280;font-size:0.7rem;grid-column:span 2">' + reasons + '</div>';
+      }
+      card += '<div>Tokens <span>' + info.tokens.toLocaleString() + '</span></div>' +
         '<div>Cost <span>$' + info.cost.toFixed(4) + '</span></div>' +
         '<div>Avg latency <span>' + info.avg_latency_ms + 'ms</span></div>' +
         '</div></div>';
+      mg.innerHTML += card;
     }
 
     // Recent

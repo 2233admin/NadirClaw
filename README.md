@@ -1,48 +1,129 @@
-# NadirClaw — Open-Source LLM Router & AI Cost Optimizer
-<img alt="NadirClaw — Smart LLM Router for AI Cost Reduction" src="logo_rb.png" />
+<p align="center">
+  <a href="https://getnadir.com">
+    <img src="docs/images/banner.svg" alt="NadirClaw — the lowest viable model, verified." width="100%" />
+  </a>
+</p>
 
-[![PyPI](https://img.shields.io/pypi/v/nadirclaw)](https://pypi.org/project/nadirclaw/)
-[![CI](https://github.com/doramirdor/NadirClaw/actions/workflows/ci.yml/badge.svg)](https://github.com/doramirdor/NadirClaw/actions)
-[![Python](https://img.shields.io/pypi/pyversions/nadirclaw)](https://pypi.org/project/nadirclaw/)
-[![License](https://img.shields.io/github/license/doramirdor/NadirClaw)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/doramirdor/NadirClaw?style=social)](https://github.com/doramirdor/NadirClaw)
+<h1 align="center">NadirClaw</h1>
 
-**NadirClaw is an open-source LLM router that reduces your AI API costs by 40-70%.** It automatically routes simple prompts to cheap or local models and complex prompts to premium models — no code changes required.
+<p align="center">
+  <strong>The lowest viable model, verified.</strong><br>
+  NadirClaw routes every prompt to the cheapest model that can reliably answer, verifies the
+  output, and escalates only when it has to. Better answers at lower cost, and it prices every
+  routed request against your baseline so you can see what it actually saved.
+</p>
 
-NadirClaw runs locally as an **OpenAI-compatible proxy** and sits between your AI tools and LLM providers. It classifies every prompt in ~10ms using sentence embeddings and routes it to the optimal model. Drop-in compatible with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [OpenClaw](https://openclaw.dev), Continue, Cursor, or any OpenAI API client.
+<p align="center">
+  <a href="https://pypi.org/project/nadirclaw/"><img src="https://img.shields.io/pypi/v/nadirclaw" alt="PyPI" /></a>
+  <a href="https://github.com/doramirdor/NadirClaw/actions"><img src="https://github.com/doramirdor/NadirClaw/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://pypi.org/project/nadirclaw/"><img src="https://img.shields.io/pypi/pyversions/nadirclaw" alt="Python" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/doramirdor/NadirClaw" alt="License" /></a>
+  <a href="https://github.com/doramirdor/NadirClaw"><img src="https://img.shields.io/github/stars/doramirdor/NadirClaw?style=social" alt="GitHub stars" /></a>
+</p>
+
+<p align="center">
+  Works with <strong>Claude Code</strong> · <strong>Cursor</strong> · <strong>Continue</strong> · <strong>Aider</strong> · <strong>Windsurf</strong> · <strong>Codex</strong> · <strong>OpenClaw</strong> · <strong>Open WebUI</strong> · Any OpenAI-compatible client
+</p>
+
+<p align="center">
+  <a href="https://getnadir.com?ref=readme-nav"><strong>Nadir Pro (hosted)</strong></a> · <a href="#quick-start">Quick Start</a> · <a href="#nadirclaw-vs-nadir-pro">OSS vs Pro</a> · <a href="docs/comparison.md">Comparisons</a> · <a href="https://github.com/doramirdor/nadirclaw-action">GitHub Action</a>
+</p>
+
+<p align="center">
+  <sub>Running real traffic or a team? <a href="https://getnadir.com?ref=readme-hero">Nadir Pro</a> adds a trained classifier, a live dashboard, team billing, and SSO. <strong>30-day free trial.</strong></sub>
+</p>
+
+---
 
 ## Why NadirClaw?
 
-Most LLM requests don't need a premium model. In typical coding agent sessions, **60-70% of prompts are simple** (reading files, short questions, continuations) and can be handled by models that cost 10-20x less. NadirClaw detects this automatically and routes accordingly — no prompt engineering, no code changes, no third-party service.
+Most LLM requests don't need a premium model. In typical coding sessions, **60-70% of prompts are simple** — reading files, short questions, formatting. They can be handled by models that cost 10-20x less.
 
-**Key benefits:**
-- 💰 **Cut AI API costs by 40-70%** — real savings from day one
-- ⚡ **~10ms classification overhead** — you won't notice it
-- 🔌 **Drop-in proxy** — works with any OpenAI-compatible tool
-- 🏠 **Runs locally** — your API keys never leave your machine
-- 🔄 **Fallback chains** — automatic failover when models are down
-- 📊 **Built-in cost tracking** — dashboard, reports, budget alerts
+```
+$ nadirclaw serve
+✓ Classifier ready — Listening on localhost:8856
 
-> **🔒 Your keys. Your models. No middleman.** NadirClaw runs locally and routes directly to providers. No third-party proxy, no subsidized tokens, no platform that can pull the plug on you. [Why this matters.](docs/vs-clawrouter.md)
+SIMPLE  "What is 2+2?"              → gemini-flash    $0.0002
+SIMPLE  "Format this JSON"          → haiku-4.5       $0.0004
+COMPLEX "Refactor auth module..."   → claude-sonnet    $0.098
+COMPLEX "Debug race condition..."   → gpt-5.2          $0.450
+SIMPLE  "Write a docstring"         → gemini-flash    $0.0002
 
-> **Comparisons:** [NadirClaw vs OpenRouter](docs/comparison.md) | [NadirClaw vs ClawRouter](docs/vs-clawrouter.md)
->
-> **CI/CD?** Use the [NadirClaw GitHub Action](https://github.com/doramirdor/nadirclaw-action) to route your CI LLM calls automatically.
+3 of 5 routed cheaper · $0.549 vs $1.37 all-premium · 60% saved
+```
+
+- **Cut AI API costs** — how much depends on your prompt mix, so NadirClaw measures it per request
+- **~10ms classification overhead** — you won't notice it
+- **Drop-in proxy** — works with any OpenAI-compatible tool
+- **Runs locally** — your API keys never leave your machine
+- **Fallback chains** — automatic failover when models are down
+- **Built-in cost tracking** — dashboard, reports, budget alerts
+
+> **Your keys. Your models. No middleman.** NadirClaw runs locally and routes directly to providers. No third-party proxy, no subsidized tokens, no platform that can pull the plug on you. [Why this matters.](docs/vs-clawrouter.md)
+
+## How NadirClaw works
 
 <p align="center">
-  <img src="docs/images/architecture.png" alt="NadirClaw Architecture" width="700" />
+  <img src="docs/images/how-it-works.svg" alt="How NadirClaw works — Route, Verify, Escalate" width="100%" />
 </p>
 
+Three moves, on every request:
 
-## Dashboard
+1. **Route** — a ~10ms embedding classifier predicts the *smallest* model likely to answer and sends the prompt there first. Routing modifiers (agentic tool loops, reasoning markers, vision content, long context) can override the score and force a stronger tier.
+2. **Verify** — the cheap answer is scored against quality heuristics (refusals, truncation, JSON-format failures) before it ships. Pro swaps the heuristic for a trained DeBERTa cross-encoder.
+3. **Escalate** — if the answer falls below the acceptance threshold (τ = 0.80), NadirClaw steps up to the next-best model automatically. You only pay for the big model when the small one wasn't enough.
 
-Monitor your routing in real-time with `nadirclaw dashboard`:
+## Benchmarks — proof, not promises
 
 <p align="center">
-  <img src="docs/images/dashboard.svg" alt="NadirClaw Dashboard" width="800" />
+  <img src="docs/images/proof.svg" alt="NadirClaw benchmarks — −60% cost, 98.3% quality preserved, 0.961 verifier AUROC, ~10ms overhead" width="100%" />
 </p>
 
-Install the dashboard extras: `pip install nadirclaw[dashboard]`
+NadirClaw and Nadir Pro share the same routing architecture. The numbers
+below are from the trained classifier + DeBERTa verifier in Nadir Pro;
+the NadirClaw OSS classifier uses a simpler binary centroid that trades
+some accuracy for zero training cost. Both run the same cascade rule
+engine (`nadirclaw/cascade_rules/`).
+
+### RouterBench (held-out, n=11,420)
+
+The composed system (pre-generation classifier + post-generation
+cascade verifier, τ=0.80):
+
+| Metric | Value |
+| --- | ---: |
+| AUROC | **0.961** |
+| Expected Calibration Error (ECE) | **0.016** |
+| Quality preserved vs always-Opus | **98.3%** |
+| Catastrophic-downgrade rate | 1.7% |
+| Composed cost vs always-Opus | -60% |
+
+Full τ-sweep and per-domain breakdown is in [`MODEL_CARD.md`](MODEL_CARD.md).
+
+### RouterArena (sub_10, n=809, public leaderboard)
+
+| Metric | Value |
+| --- | ---: |
+| Composite score | **0.7118** |
+| Projected leaderboard rank | **#5** |
+| Routers below (selected) | NotDiamond-0001, Auto Router, Martian |
+
+RouterArena submission PR (live):
+[RouteWorks/RouterArena#112](https://github.com/RouteWorks/RouterArena/pull/112).
+
+### Contamination audit
+
+Zero overlap between Nadir's training corpus and either held-out set:
+
+| Held-out set | Audit run | Overlap |
+| --- | --- | --- |
+| RouterBench `0shot` | 2026-05-24 | 0 of 36,481 |
+| RouterArena `sub_10` | 2026-05-27 | 0 of 809 |
+| RouterArena `full` | 2026-05-27 | 0 of 8,399 |
+
+The audit is reproducible from this repo:
+[`verifier/contamination_audit.py`](verifier/contamination_audit.py).
+Hash recipe: `sha256(NFC(prompt).strip().casefold().utf8)`.
 
 ## Quick Start
 
@@ -70,11 +151,39 @@ nadirclaw serve --verbose
 
 That's it. NadirClaw starts on `http://localhost:8856` with sensible defaults (Gemini 3 Flash for simple, OpenAI Codex for complex). If you skip `nadirclaw setup`, the `serve` command will offer to run it on first launch.
 
+## NadirClaw vs Nadir Pro
+
+NadirClaw is the free, source-available core, licensed under PolyForm Noncommercial (free for noncommercial use). If you are routing production traffic or running a team, [**Nadir Pro**](https://getnadir.com) is the hosted version with more accurate routing, team features, and analytics. Same routing philosophy, zero vendor lock-in (Pro lets you BYOK and you can always fall back to NadirClaw self-hosted).
+
+|  | NadirClaw (Free, OSS) | [Nadir Pro](https://getnadir.com) (Hosted) |
+|---|---|---|
+| **License** | PolyForm Noncommercial 1.0.0 (free for noncommercial use; commercial license via [getnadir.com](https://getnadir.com)) | Proprietary |
+| **Deploy** | Self-hosted, localhost | `api.getnadir.com` or self-host via Docker |
+| **Pre-generation classifier** | Binary centroid (~10ms), opt-in DistilBERT, or **bundled** `wide_deep_asym_v3` trained checkpoint (~40ms CPU; see [`MODEL_CARD.md`](MODEL_CARD.md)) | Same trained classifier + closed-loop retraining, provider-health-aware ranking |
+| **Post-generation verifier** | Rule-based heuristic (refusal / length / JSON checks, ~1ms) | Trained DeBERTa-v3-small cross-encoder, AUROC 0.96 on RouterBench held-out |
+| **Verifier-gated cascade** | Yes (heuristic verifier) | Yes (trained verifier) |
+| **Storage** | Local JSONL + SQLite | Postgres (Supabase), multi-tenant |
+| **Dashboard** | Terminal + local web | Hosted web dashboard, per-team analytics |
+| **Cost tracking** | `nadirclaw savings` CLI | Live dashboard, monthly invoices, projected savings |
+| **Extras** | Context optimize, fallback chains | Everything in Free, plus semantic cache, response healing, prompt caching passthrough |
+| **Team** | None | SSO, audit logs, API key management, priority support |
+| **Billing** | N/A | Pay only on savings: 25% of first $2K, 10% above, plus $9/mo base |
+| **Best for** | Solo devs, self-hosters, anyone who wants the router running locally | Teams routing real traffic who want a hosted dashboard and want someone else to maintain the classifier |
+
+**Start free at [getnadir.com](https://getnadir.com/auth?mode=signup)** (15 requests/day on our keys, unlimited with BYOK). If Nadir is not saving you money, you do not pay us.
+
 ## Features
 
+- **Context Optimize** — compacts bloated context (JSON, tool schemas, chat history, whitespace) before dispatch, saving 30-70% input tokens with zero semantic loss. Modes: `off` (default), `safe` (lossless), `aggressive` (+ columnar JSON-array packing & semantic dedup), `progressive` (staged ladder that only escalates until a token budget is met). Pluggable backend (`native` default, or opt-in `headroom`). See [savings analysis](docs/context-optimize-savings.md)
 - **Smart routing** — classifies prompts in ~10ms using sentence embeddings
+- **Pluggable classifier** — `binary` (default, ~10ms centroid classifier) or `distilbert` (3-class fine-tuned DistilBERT that natively predicts simple/mid/complex). Select with `NADIRCLAW_COMPLEXITY_ANALYZER`
+- **Three-tier routing** — simple / mid / complex tiers with configurable score thresholds (`NADIRCLAW_TIER_THRESHOLDS`); set `NADIRCLAW_MID_MODEL` for a cost-effective middle tier
+- **N-tier YAML config** — one classifier head, any number of tiers. The default profile (`n2_default.yaml`) ships a cheap-and-strong two-tier cascade tuned on RouterArena (arena_F 0.7358, beats the legacy three-tier baseline). Switch profiles with `NADIRCLAW_TIERS_PROFILE=<name>`. Custom YAML profiles hot-reload from disk in <30s. See `nadirclaw/tier_config/` and the [N-tier docs](#n-tier-routing) below.
+- **Verifier-gated cascade** — cheap model first, score the response with a rule-based heuristic verifier (refusals, truncations, JSON-format failures, ~1ms), escalate to the next tier when the score falls below τ=0.80. Same architecture as Nadir Pro, swap the verifier for the trained DeBERTa cross-encoder. See `nadirclaw/cascade.py` (`Cascade` for 2-tier, `NTierCascade` for N≥2).
+- **Cascade rule engine** — declarative YAML rules drive per-prompt overrides: `force_escalate` on patterns where the verifier is unreliable (code, summarisation), `set_threshold` to raise the verifier bar on borderline domains, `force_cheap` for trivially-easy patterns, `set_max_tokens` for length budgeting. Hot-reload from disk; profiles live in `nadirclaw/cascade_rules/profiles/`.
 - **Agentic task detection** — auto-detects tool use, multi-step loops, and agent system prompts; forces complex model for agentic requests
 - **Reasoning detection** — identifies prompts needing chain-of-thought and routes to reasoning-optimized models
+- **Vision routing** — auto-detects image content in messages and routes to vision-capable models (GPT-4o, Claude, Gemini)
 - **Routing profiles** — `auto`, `eco`, `premium`, `free`, `reasoning` — choose your cost/quality strategy per request
 - **Model aliases** — use short names like `sonnet`, `flash`, `gpt4` instead of full model IDs
 - **Session persistence** — pins the model for multi-turn conversations so you don't bounce between models mid-thread
@@ -84,8 +193,10 @@ That's it. NadirClaw starts on `http://localhost:8856` with sensible defaults (G
 - **Native Gemini support** — calls Gemini models directly via the Google GenAI SDK (not through LiteLLM)
 - **OAuth login** — use your subscription with `nadirclaw auth <provider> login` (OpenAI, Anthropic, Google), no API key needed
 - **Multi-provider** — supports Gemini, OpenAI, Anthropic, Ollama, and any LiteLLM-supported provider
-- **OpenAI-compatible API** — drop-in replacement for any tool that speaks the OpenAI chat completions API
-- **Request reporting** — `nadirclaw report` analyzes your JSONL logs with filters, latency stats, tier breakdown, and token usage
+- **OpenAI-compatible API** — drop-in replacement for any tool that speaks the OpenAI chat completions API (`/v1/chat/completions`)
+- **Anthropic-compatible API** — `/v1/messages` endpoint so Anthropic-native clients like Claude Code route through NadirClaw; streaming piped through byte-for-byte
+- **Request reporting** — `nadirclaw report` with per-model and per-day cost breakdown (`--by-model --by-day`), anomaly flagging, filters, latency stats, tier breakdown, and token usage
+- **Log export** — `nadirclaw export --format csv|jsonl --since 7d` for offline analysis in spreadsheets or data tools
 - **Raw logging** — optional `--log-raw` flag to capture full request/response content for debugging and replay
 - **Prometheus metrics** — built-in `/metrics` endpoint with request counts, latency histograms, token/cost totals, cache hits, and fallback tracking (zero extra dependencies)
 - **OpenTelemetry tracing** — optional distributed tracing with GenAI semantic conventions (`pip install nadirclaw[telemetry]`)
@@ -94,6 +205,16 @@ That's it. NadirClaw starts on `http://localhost:8856` with sensible defaults (G
 - **Prompt caching** — in-memory LRU cache for identical chat completions, skipping redundant LLM calls entirely. Configurable TTL and max size via `NADIRCLAW_CACHE_TTL` and `NADIRCLAW_CACHE_MAX_SIZE`. Monitor with `nadirclaw cache` or the `/v1/cache` endpoint
 - **Live dashboard** — `nadirclaw dashboard` for terminal, or visit `http://localhost:8856/dashboard` for a web UI with real-time stats, cost tracking, and model usage
 - **GitHub Action** — [`doramirdor/nadirclaw-action`](https://github.com/doramirdor/nadirclaw-action) for CI/CD pipelines
+
+## Dashboard
+
+Monitor your routing in real-time with `nadirclaw dashboard`:
+
+<p align="center">
+  <img src="docs/images/dashboard.svg" alt="NadirClaw Dashboard" width="800" />
+</p>
+
+Install the dashboard extras: `pip install nadirclaw[dashboard]`
 
 ## Prerequisites
 
@@ -140,10 +261,11 @@ Run NadirClaw + Ollama with zero cost, fully local:
 
 ```bash
 git clone https://github.com/doramirdor/NadirClaw.git && cd NadirClaw
+echo "NADIRCLAW_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up
 ```
 
-This starts Ollama and NadirClaw on port `8856`. Pull a model once it's running:
+This starts Ollama and NadirClaw on port `8856`. The container listens on all interfaces so the port can be published, which is why it will not start without `NADIRCLAW_AUTH_TOKEN`. Clients send the token as `Authorization: Bearer <token>`. Pull a model once it's running:
 
 ```bash
 docker compose exec ollama ollama pull llama3.1:8b
@@ -189,6 +311,23 @@ NadirClaw supports multiple ways to provide LLM credentials, checked in this ord
 1. **OpenClaw stored token** (`~/.openclaw/agents/main/agent/auth-profiles.json`)
 2. **NadirClaw stored credential** (`~/.nadirclaw/credentials.json`)
 3. **Environment variable** (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
+
+#### Server deployments: `NADIRCLAW_PREFER_ENV_KEYS`
+
+On a shared server the default order is backwards. A stored personal OAuth or
+subscription token carries *that person's* rate limit, so every request the
+server proxies is billed and throttled against one human — and short of
+deleting a credentials file the machine may need for other tools, there is no
+way to override it.
+
+```bash
+NADIRCLAW_PREFER_ENV_KEYS=1 ANTHROPIC_API_KEY=sk-ant-... nadirclaw serve
+```
+
+Set it and the environment moves to the front of the chain, falling back to the
+stored credential when the relevant env var is unset. Leave it off on a laptop:
+there you want the token you logged in with. `nadirclaw status` reports `env`
+as the source when the override is what supplied the key.
 
 #### Using `nadirclaw auth` (recommended)
 
@@ -254,10 +393,171 @@ NADIRCLAW_FALLBACK_CHAIN=gpt-4.1,claude-sonnet-4-5-20250929,gemini-2.5-flash  # 
 | **Claude + Claude** | `claude-haiku-4-5-20251001` | `claude-sonnet-4-5-20250929` | `ANTHROPIC_API_KEY` |
 | **OpenAI + Ollama** | `ollama/llama3.1:8b` | `gpt-4.1` | `OPENAI_API_KEY` |
 | **OpenAI + OpenAI** | `gpt-4.1-mini` | `gpt-4.1` | `OPENAI_API_KEY` |
+| **DeepSeek + DeepSeek** | `deepseek/deepseek-v4-flash` | `deepseek/deepseek-v4-pro` | `DEEPSEEK_API_KEY` |
 | **OpenAI Codex** | `gemini-2.5-flash` | `openai-codex/gpt-5.3-codex` | `GEMINI_API_KEY` + OAuth login |
 | **Fully local** | `ollama/llama3.1:8b` | `ollama/qwen3:32b` | None |
 
 Gemini models are called natively via the Google GenAI SDK. All other models go through [LiteLLM](https://docs.litellm.ai/docs/providers), which supports 100+ providers.
+
+### Complexity analyzer
+
+NadirClaw ships two local prompt classifiers, plus an optional remote one. Pick one with `NADIRCLAW_COMPLEXITY_ANALYZER`:
+
+| Value | Model | Latency | Size | Output |
+|---|---|---|---|---|
+| `binary` *(default)* | Sentence-embedding centroid classifier | ~10ms | ~22MB | 2-class (simple / complex) — `mid` and `reasoning` come from rule overlays |
+| `distilbert` | Fine-tuned DistilBERT sequence classifier | ~30ms | ~256MB | 3-class (simple / mid / complex) predicted natively |
+| `morph` | [Morph hosted Model Router](https://docs.morphllm.com/sdk/components/router) (remote) | ~50ms + network | — | difficulty → simple / mid / complex via the same tier thresholds |
+
+```bash
+# opt into the 3-class DistilBERT classifier
+NADIRCLAW_COMPLEXITY_ANALYZER=distilbert
+```
+
+The DistilBERT artifact is **not** bundled in the package — on first use it downloads (~256MB, then cached under `~/.cache/huggingface/hub/`) from the Hugging Face Hub. Override the source repo with `NADIRCLAW_DISTILBERT_REPO`. If the download fails, NadirClaw logs a warning and falls back to the binary classifier — it never crashes the router.
+
+#### Morph router (remote, opt-in)
+
+`morph` delegates the routing decision to Morph's hosted Model Router instead of a local model. It is **strictly opt-in** and requires `MORPH_API_KEY`:
+
+```bash
+NADIRCLAW_COMPLEXITY_ANALYZER=morph MORPH_API_KEY=sk-... nadirclaw serve
+```
+
+Morph returns a `difficulty` (`easy` / `medium` / `hard` / `needs_info`), which NadirClaw maps to a complexity score and then to a tier using the same `NADIRCLAW_TIER_THRESHOLDS` as the local classifiers (so `mid` only appears when `NADIRCLAW_MID_MODEL` is set). Tuning knobs:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MORPH_API_KEY` | — | Required. Without it, routing falls back to `binary`. |
+| `MORPH_API_BASE` | `https://api.morphllm.com/v1` | Override for self-hosted/proxy gateways. |
+| `MORPH_TIMEOUT_MS` | `200` | Per-request budget; past it, fail closed to the local classifier. |
+
+**Fail-closed:** on a missing key, HTTP error, timeout, or unparseable response, NadirClaw logs once and serves that request from the local binary classifier — a Morph outage degrades routing quality, never availability. Repeated prompts within a session are served from a small in-memory cache. Note: the Morph call adds a small per-classification cost that NadirClaw's savings report does not yet subtract from net-saved (tracked as a follow-up).
+
+Test how any prompt buckets with either analyzer:
+
+```bash
+nadirclaw classify "design a distributed rate limiter"
+NADIRCLAW_COMPLEXITY_ANALYZER=distilbert nadirclaw classify "fix this typo"
+```
+
+### N-tier routing
+
+The shape of the cascade — how many tiers, which models per tier, how the
+verifier escalates — is configured via a YAML profile. One classifier
+head serves N=2, N=3, N=5, ..., because the classifier emits a continuous
+score in `[0, 1]` and the YAML cutoffs slice it into tiers.
+
+Switch profiles with `NADIRCLAW_TIERS_PROFILE`:
+
+```bash
+# default: cheap + strong, tuned on RouterArena
+unset NADIRCLAW_TIERS_PROFILE                       # uses n2_default.yaml
+
+# legacy three-tier behaviour (simple / medium / complex)
+export NADIRCLAW_TIERS_PROFILE=n3_legacy
+
+# your own profile
+export NADIRCLAW_TIERS_PROFILE=/path/to/my_5tier.yaml
+```
+
+The bundled `n2_default.yaml` is the new default. It encodes the two-tier
+cascade that won our internal RouterArena bake-off (arena_F 0.7358 vs N=3
+at 0.7136):
+
+```yaml
+version: 1
+mode: tiered
+selector:
+  classifier: wide_deep_asym_v3
+cascade:
+  escalation: adjacent
+  acceptance_threshold: 0.80
+  rules_profile: default
+tiers:
+  - name: cheap
+    score_min: 0.00
+    model_pool: [gpt-4o-mini, qwen3-235b-a22b-2507, deepseek-v3.2, claude-3-haiku-20240307]
+    max_output_tokens: 2048
+  - name: strong
+    score_min: 0.65
+    model_pool: [gpt-5-mini, deepseek-reasoner, deepseek-v4-flash, grok-4-1-fast-reasoning, claude-sonnet-4]
+    max_output_tokens: 4096
+```
+
+Edit a profile YAML on disk and the change is picked up within 30s — no
+restart, same TTL hot-reload pattern as the cascade rule engine.
+
+**Migration for existing users:** if you have `NADIRCLAW_SIMPLE_MODEL` /
+`NADIRCLAW_MID_MODEL` / `NADIRCLAW_COMPLEX_MODEL` set and `NADIRCLAW_TIERS_PROFILE`
+unset, your routing keeps working — the legacy 3-tier env-var path is
+untouched. Set `NADIRCLAW_TIERS_PROFILE=n3_legacy` to opt into the
+N-tier dispatch with the bundled 3-tier profile, or write your own.
+
+Schema reference: `nadirclaw/tier_config/schema.py`. Sample profiles:
+`nadirclaw/tier_config/profiles/`.
+
+### Trained verifier (nadirclaw/cascade-verifier-v1)
+
+The default `n2_default` profile escalates via the rule-based
+`HeuristicVerifier` shipped in this repo — no extra dependencies, runs
+in under 1 ms per call, catches the obvious failure modes (refusals,
+truncation, JSON parse failure). For the subtler "looks right but is
+factually wrong" tail, NadirClaw v0.19 ships an opt-in trained
+cross-encoder verifier.
+
+This is the frozen DeBERTa-v3-small snapshot used in the
+[RouterArena PR #112](https://github.com/RouteWorks/RouterArena/pull/112)
+submission (arena_F 0.7358). It is released under the PolyForm
+Noncommercial License 1.0.0 as
+[`nadirclaw/cascade-verifier-v1`](https://huggingface.co/nadirclaw/cascade-verifier-v1)
+on HuggingFace so the RouterArena number is reproducible end-to-end
+with the noncommercial router.
+
+**Install with the optional extras:**
+
+```bash
+pip install nadirclaw[trained]
+```
+
+This pulls in `transformers>=4.40` and `torch>=2.0`. Users who do not
+want the transformer stack pay nothing — the heuristic remains the
+default.
+
+**Activate the trained verifier:**
+
+```bash
+export NADIRCLAW_TIERS_PROFILE=n2_trained
+```
+
+The `n2_trained` profile uses the same N=2 cascade ladder as
+`n2_default` but routes verifier decisions through the trained
+DeBERTa-v3-small cross-encoder. Weights load lazily on first cascade
+call (~500 MB checkpoint, ~10 s download into the HF cache; subsequent
+runs hit the cache).
+
+**Direct API:**
+
+```python
+from nadirclaw.trained_verifier import TrainedVerifier
+
+verifier = TrainedVerifier(threshold=0.80)
+result = verifier.score(prompt, cheap_answer)
+print(result.score, result.accepted)
+```
+
+**What is and is not released**
+
+| | OSS (NadirClaw v0.19) | Pro (Nadir hosted) |
+| --- | --- | --- |
+| Frozen verifier weights | YES (`cascade-verifier-v1`, PolyForm Noncommercial 1.0.0) | YES |
+| Training pipeline | NO | YES (corpus + judge + curriculum) |
+| Adaptive retraining loop | NO | YES |
+| Custom-routed quality scoring | NO | YES |
+
+The frozen snapshot is enough to reproduce the RouterArena result; the
+adaptive retraining keeps the production verifier current as new model
+families ship.
 
 ## Usage with Gemini
 
@@ -327,6 +627,34 @@ Manual configuration is still supported via the `OLLAMA_API_BASE` environment va
 # Connect to Ollama on a different host
 OLLAMA_API_BASE=http://192.168.1.100:11434 nadirclaw serve
 ```
+
+## Usage with Custom OpenAI-Compatible Endpoints
+
+NadirClaw works with any OpenAI-compatible API server — vLLM, LocalAI, LM Studio, text-generation-inference, or any custom endpoint:
+
+```bash
+# Point NadirClaw at your custom endpoint
+NADIRCLAW_API_BASE=http://your-server:8000/v1 \
+NADIRCLAW_SIMPLE_MODEL=openai/your-small-model \
+NADIRCLAW_COMPLEX_MODEL=openai/your-large-model \
+nadirclaw serve --verbose
+```
+
+Use the `openai/` prefix on model names so LiteLLM routes them as OpenAI-compatible. `NADIRCLAW_API_BASE` is passed to all non-Ollama, non-Gemini LiteLLM calls.
+
+You can also mix custom endpoints with cloud providers:
+
+```bash
+# Local model for simple, cloud for complex
+NADIRCLAW_API_BASE=http://localhost:8000/v1 \
+NADIRCLAW_SIMPLE_MODEL=openai/local-llama \
+NADIRCLAW_COMPLEX_MODEL=claude-sonnet-4-5-20250929 \
+nadirclaw serve
+```
+
+For a fully worked example — env vars plus a `models.local.json` pricing
+override for a hosted third-party gateway — see
+[Routing NadirClaw at a custom OpenAI-compatible gateway](docs/providers/starveri.md).
 
 ## Usage with OpenClaw
 
@@ -417,21 +745,44 @@ This delegates to the Codex CLI for the OAuth flow and stores the credentials in
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is Anthropic's CLI coding agent. NadirClaw works as a drop-in proxy that intercepts Claude Code's API calls and routes simple prompts to cheaper models.
 
-```bash
-# Point Claude Code at NadirClaw
-export ANTHROPIC_BASE_URL=http://localhost:8856/v1
-export ANTHROPIC_API_KEY=local
+### Seamless onboard (recommended)
 
-# Start NadirClaw, then use Claude Code normally
+One command wires everything up — detects your Claude Code models, maps them into NadirClaw tiers, persists `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL` into `~/.claude/settings.json`, and installs a launchd / systemd auto-start unit so the proxy is always up when you run `claude`:
+
+```bash
+nadirclaw claude onboard --interactive
+```
+
+`--interactive` shows a menu of every model your account can reach (pulled live from Anthropic's `/v1/models` using your stored token, with a hardcoded fallback) and lets you pick a model for each tier plus a default routing profile. Without the flag, onboarding auto-detects.
+
+After that, just run `claude` from any new shell — no env exports, no manual server start. Re-run with `--detect-only` first if you want to see the tier mapping without writing anything, or pass `--no-daemon` / `--no-settings` to skip individual pieces. Undo everything with `nadirclaw claude uninstall`.
+
+> **Subscription users:** if you don't have an Anthropic API key, run `claude setup-token` and feed the result to `nadirclaw auth setup-token` first. NadirClaw then talks to Anthropic on your behalf using the subscription token.
+
+### Lightweight shim (no daemon, no settings.json edits)
+
+Prefer not to install a background service? Use the shim instead:
+
+```bash
+nadirclaw claude shim install
+export PATH="$HOME/.nadirclaw/bin:$PATH"   # add to your shell rc
+```
+
+Now `claude` resolves to a small wrapper that probes `http://localhost:8856/health`, lazy-starts `nadirclaw serve` if it's down, exports the right env vars, and exec's the real Claude binary. Remove it with `nadirclaw claude shim uninstall`.
+
+### Manual setup
+
+If you don't want either option, the original env-var dance still works:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8856   # bare host — Claude Code appends /v1/messages itself
+export ANTHROPIC_API_KEY=local
+export ANTHROPIC_MODEL=nadir-auto                 # so Claude Code routes through NadirClaw
 nadirclaw serve --verbose
 claude
 ```
 
-You can also wrap this in a shell alias:
-
-```bash
-alias claude-routed='ANTHROPIC_BASE_URL=http://localhost:8856/v1 ANTHROPIC_API_KEY=local claude'
-```
+> **Important:** `ANTHROPIC_BASE_URL` must **not** include a `/v1` suffix — Claude Code appends `/v1/messages` itself, so a suffix produces a broken `/v1/v1/messages` path.
 
 ### Authentication
 
@@ -445,14 +796,124 @@ nadirclaw auth anthropic login
 nadirclaw auth setup-token
 ```
 
+#### Subscription tokens and premium-model access
+
+If you authenticate with a Claude **subscription** token (`sk-ant-oat*`, from `nadirclaw auth anthropic login` or `claude setup-token`) and find that **Haiku works but Sonnet/Opus return an immediate `rate_limit_error`**, Anthropic is likely gating premium models behind the official Claude Code identity. The real client always leads its requests with a fixed identity system block; raw API/SDK callers omit it. Opt in to have NadirClaw prepend it:
+
+```bash
+export NADIRCLAW_CLAUDE_CODE_IDENTITY=1
+nadirclaw serve
+```
+
+When enabled, NadirClaw prepends `"You are Claude Code, Anthropic's official CLI for Claude."` as the first `system` block on OAuth (`sk-ant-oat*`) requests — only when not already present, preserving any system prompt you sent after it. It has **no effect on API-key (`sk-ant-api*`) credentials** and is **off by default**, since it changes the system prompt the model sees.
+
 ### What happens
 
 Claude Code sends every request to Anthropic's API. With NadirClaw in front, each prompt is classified in ~10ms:
 
-- Simple prompts (reading files, quick questions, "what does this function do?") get routed to a cheap model like Gemini Flash
-- Complex prompts (refactoring, architecture, multi-file changes) stay on Claude
+- **Simple** — short reads, quick questions, formatting, single-file glances (e.g. "what does this function do?"). Routed to a cheap model like Gemini Flash or Haiku.
+- **Mid** — focused edits, single-function debugging, small refactors. Routed to a mid-tier model when `NADIRCLAW_MID_MODEL` is set.
+- **Complex** — architecture, multi-file refactors, multi-step planning, agentic tool loops, reasoning-heavy prompts. Stays on Claude / GPT-5 / Opus.
 
-Streaming works as expected. In typical Claude Code usage, 40-70% of prompts are simple enough to route to a cheaper model, which translates directly to cost savings.
+Classification uses sentence-transformer embeddings against learned centroids plus rule overrides (tool definitions, reasoning markers, large context, vision content). See `nadirclaw classify "<prompt>"` to test how any prompt would be bucketed.
+
+### Choosing routing profiles in Claude Code
+
+Claude Code's `/model` **picker UI is hardcoded** to Anthropic's own model families — it does not show custom entries, even though NadirClaw advertises them on `/v1/models`. To route through a NadirClaw profile, set the model explicitly:
+
+```bash
+claude --model nadir-auto        # smart routing (per-prompt classification)
+claude --model nadir-eco         # force cheap tier for every prompt
+claude --model nadir-premium     # force complex tier for every prompt
+claude --model nadir-reasoning   # force the reasoning-optimized model
+claude --model nadir-free        # force the configured free / local model
+```
+
+Or persist a default by setting `ANTHROPIC_MODEL` in `~/.claude/settings.json` (the `onboard` command does this for you). Inside a session you can also type `/model nadir-eco` as a slash command.
+
+Streaming works as expected. In typical Claude Code usage, a large share of prompts are simple enough to route to a cheaper model, which translates directly to cost savings.
+
+### Structural views for oversized file reads
+
+Claude Code returns at most ~25,000 tokens per `Read` and truncates the rest, so
+a large module arrives as a partial page and everything below the cut is missing
+until the agent pages through the file. An optional hook intercepts those reads
+and answers with a declaration-level view instead — every definition, decorator,
+docstring excerpt and module constant, each tagged with its **original** source
+lines:
+
+```bash
+nadirclaw claude hook install     # register it in ~/.claude/settings.json
+nadirclaw claude hook status      # check whether it is registered
+nadirclaw claude hook uninstall   # remove it, leaving other hooks alone
+```
+
+Start a new Claude Code session for it to take effect. This is separate from the
+proxy: `optimize` and `compress` rewrite the messages array on its way to a
+provider, while this runs in the agent before the file ever enters the
+conversation, so it works whether or not you route through NadirClaw.
+
+Only whole-file reads of `.py`/`.pyi` estimated past the cap are served. Narrowed
+reads (`offset`/`limit`) are the recovery path and always pass through, as do
+other languages, unparsable syntax, files under the cap, and modules above 4 MiB,
+which would not parse inside the hook's time budget. The file is untouched on
+disk: to get exact bodies back, re-read the range you need. The view is not valid
+replacement code, and the hook says so in every response.
+
+Measured once on this repo's `nadirclaw/server.py` (2,939 lines) with Claude Code
+2.1.220 and Haiku 4.5: without the hook the read truncated and the session paged
+twice for $0.140; with it, one 23,437-character view for $0.066. Both answers
+were correct. That is a single file and a single prompt, not a general savings
+claim.
+
+### How the proxy speaks to Claude Code
+
+NadirClaw exposes **both** API surfaces:
+
+- `/v1/chat/completions` — OpenAI-compatible (Open WebUI, Cursor, Continue, …)
+- `/v1/messages` — Anthropic-compatible (Claude Code). Routing runs first, then the request is forwarded to `api.anthropic.com` with the model rewritten. Streaming is piped through SSE byte-for-byte.
+
+## Usage with Open WebUI
+
+[Open WebUI](https://openwebui.com) is a popular self-hosted AI interface. NadirClaw works as a drop-in OpenAI-compatible provider:
+
+```bash
+# View setup instructions
+nadirclaw openwebui onboard
+```
+
+### Quick Setup
+
+1. Start NadirClaw: `nadirclaw serve`
+2. In Open WebUI, go to **Admin Settings** → **Connections** → **OpenAI** → **Add Connection**
+3. Enter:
+   - **URL:** `http://localhost:8856/v1`
+   - **API Key:** `local`
+4. Select the `auto` model in your chat
+
+Open WebUI will auto-discover NadirClaw's available models (`auto`, `eco`, `premium`, plus your configured tier models). The `auto` model routes each prompt to the right model automatically — simple prompts go to cheap models, complex ones to premium.
+
+## Usage with Continue
+
+[Continue](https://continue.dev) is an open-source AI coding assistant for VS Code and JetBrains. NadirClaw can be added as a model provider:
+
+```bash
+# Auto-configure Continue
+nadirclaw continue onboard
+```
+
+This writes a `~/.continue/config.json` entry with NadirClaw's `auto` model. Just start the server, open Continue in your editor, and select "NadirClaw Auto" from the model dropdown.
+
+## Usage with Cursor
+
+[Cursor](https://cursor.sh) supports OpenAI-compatible providers natively:
+
+```bash
+# View setup instructions
+nadirclaw cursor onboard
+```
+
+In Cursor: **Settings** → **Models** → **OpenAI API Key** → enter `local` as the API key and `http://localhost:8856/v1` as the base URL, with model name `auto`.
 
 ## Usage with Any OpenAI-Compatible Tool
 
@@ -540,6 +1001,9 @@ Use short names instead of full model IDs:
 | `flash` | `gemini-2.5-flash` |
 | `gemini-pro` | `gemini-2.5-pro` |
 | `deepseek` | `deepseek/deepseek-chat` |
+| `deepseek-v4` | `deepseek/deepseek-v4-flash` |
+| `deepseek-v4-flash` | `deepseek/deepseek-v4-flash` |
+| `deepseek-v4-pro` | `deepseek/deepseek-v4-pro` |
 | `deepseek-r1` | `deepseek/deepseek-reasoner` |
 | `llama` | `ollama/llama3.1:8b` |
 
@@ -553,7 +1017,7 @@ curl http://localhost:8856/v1/chat/completions \
 ## Routing Intelligence — How NadirClaw Classifies Prompts
 
 <p align="center">
-  <img src="docs/images/routing-flow.png" alt="Routing flow" width="700" />
+  <img src="docs/images/routing-flow.svg" alt="Routing intelligence — how NadirClaw classifies a prompt" width="100%" />
 </p>
 
 Beyond basic simple/complex classification, NadirClaw applies routing modifiers that can override the base decision:
@@ -580,6 +1044,10 @@ Prompts with 2+ reasoning markers are routed to the reasoning model (or complex 
 - "analyze the tradeoffs", "compare and contrast"
 - "critically analyze", "evaluate whether"
 
+### Vision Routing
+
+NadirClaw detects when messages contain images (`image_url` content parts, including base64-encoded images) and automatically routes to a vision-capable model. If the classifier picks a text-only model (e.g., DeepSeek, Ollama), NadirClaw swaps to a vision-capable alternative from your configured tiers.
+
 ### Session Persistence
 
 Once a conversation is routed to a model, subsequent messages in the same session reuse that model. This prevents jarring mid-conversation model switches. Sessions are keyed by system prompt + first user message, with a 30-minute TTL.
@@ -594,11 +1062,18 @@ If the estimated token count of a request exceeds a model's context window, Nadi
 nadirclaw setup              # Interactive setup wizard (providers, keys, models)
 nadirclaw serve              # Start the router server
 nadirclaw serve --log-raw    # Start with full request/response logging
+nadirclaw update-models      # Refresh local model metadata
 nadirclaw test               # Probe each configured model and verify it responds
+nadirclaw optimize <file>    # Test context compaction on a file (dry-run)
 nadirclaw classify <prompt>  # Classify a prompt (no server needed)
 nadirclaw classify --format json <prompt>  # Machine-readable JSON output
 nadirclaw report             # Show a summary report of request logs
 nadirclaw report --since 24h # Report for the last 24 hours
+nadirclaw report --by-model  # Per-model cost breakdown with anomaly detection
+nadirclaw report --by-day    # Per-day cost breakdown
+nadirclaw report --by-model --by-day  # Combined model × day breakdown
+nadirclaw export --format csv --since 7d  # Export logs to CSV for offline analysis
+nadirclaw export --format jsonl -o data.jsonl  # Export to JSONL file
 nadirclaw savings            # Show how much money NadirClaw saved you
 nadirclaw savings --since 7d # Savings for the last 7 days
 nadirclaw dashboard          # Live terminal dashboard with real-time stats
@@ -617,7 +1092,36 @@ nadirclaw auth gemini login       # Login with Google Gemini (OAuth, opens brows
 nadirclaw auth gemini logout      # Remove stored Gemini OAuth credential
 nadirclaw codex onboard         # Configure Codex integration
 nadirclaw openclaw onboard   # Configure OpenClaw integration
+nadirclaw openwebui onboard  # Show Open WebUI setup instructions
+nadirclaw continue onboard   # Configure Continue (continue.dev) integration
+nadirclaw cursor onboard     # Show Cursor editor setup instructions
 nadirclaw build-centroids    # Regenerate centroid vectors from prototypes
+```
+
+### Model Metadata Updates
+
+`nadirclaw update-models` writes model metadata to `~/.nadirclaw/models.json`.
+Without options it exports the built-in registry. Pass `--source-url` or set
+`NADIRCLAW_MODEL_REGISTRY_URL` to merge a published registry JSON before saving. The
+router merges the saved file at startup, then applies any user-managed overrides from
+`~/.nadirclaw/models.local.json`.
+
+`update-models` only rewrites the generated metadata file. It does not re-export
+entries from `models.local.json`, so local overrides stay separate across refreshes.
+
+Use `models.local.json` for private models or custom pricing:
+
+```json
+{
+  "models": {
+    "openai/my-local-model": {
+      "context_window": 32768,
+      "cost_per_m_input": 0,
+      "cost_per_m_output": 0,
+      "has_vision": false
+    }
+  }
+}
 ```
 
 ### `nadirclaw serve`
@@ -627,12 +1131,36 @@ nadirclaw serve [OPTIONS]
 
 Options:
   --port INTEGER          Port to listen on (default: 8856)
+  --host TEXT             Interface to bind (default: 127.0.0.1). A non-loopback host requires an auth token
   --simple-model TEXT     Model for simple prompts
   --complex-model TEXT    Model for complex prompts
   --models TEXT           Comma-separated model list (legacy)
   --token TEXT            Auth token
+  --optimize [off|safe|aggressive|progressive]  Context compression: off | safe | aggressive | progressive (default: off)
   --verbose               Enable debug logging
   --log-raw               Log full raw requests and responses to JSONL
+```
+
+### `nadirclaw optimize`
+
+Test context compaction on a file or stdin without running the server:
+
+```bash
+nadirclaw optimize payload.json                    # dry-run with safe mode
+nadirclaw optimize payload.json --format json      # machine-readable output
+nadirclaw optimize payload.json --mode aggressive  # + columnar JSON packing & semantic dedup
+cat messages.json | nadirclaw optimize             # pipe from stdin
+```
+
+Input can be a JSON file with a `messages` array (OpenAI format), a raw JSON array of messages, or plain text (wrapped as a single user message).
+
+Example output:
+```
+Mode:          safe
+Original:      ~3,657 tokens
+Optimized:     ~1,573 tokens
+Saved:         ~2,084 tokens (57.0%)
+Transforms:    tool_schema_dedup, json_minify, whitespace_normalize
 ```
 
 ### `nadirclaw report`
@@ -649,6 +1177,9 @@ nadirclaw report --since 24h         # last 24 hours
 nadirclaw report --since 7d          # last 7 days
 nadirclaw report --since 2025-02-01  # since a specific date
 nadirclaw report --model gemini      # filter by model name
+nadirclaw report --by-model          # per-model cost breakdown
+nadirclaw report --by-day            # per-day cost breakdown
+nadirclaw report --by-model --by-day # combined breakdown with anomaly detection
 nadirclaw report --format json       # machine-readable JSON output
 nadirclaw report --export report.txt # save to file
 ```
@@ -769,33 +1300,16 @@ nadirclaw test --timeout 10
 
 ## How It Works
 
-NadirClaw sits between your application and the LLM provider as a transparent proxy:
+NadirClaw sits between your application and the LLM provider as a transparent local proxy. Your tools talk to it on `localhost`; it classifies, optimizes, verifies, and routes each request directly to the provider with your own keys — nothing passes through a third party.
 
-```
-┌─────────────────┐
-│  Your App       │
-│  (Claude Code,  │
-│   Cursor, etc)  │
-└────────┬────────┘
-         │ OpenAI API request
-         ▼
-┌─────────────────┐
-│  NadirClaw      │
-│  Classifier     │
-└────────┬────────┘
-         │ Route decision (10ms)
-         ▼
-┌─────────────────┐
-│  LLM Provider   │
-│  (Claude, GPT,  │
-│   Gemini, etc)  │
-└─────────────────┘
-```
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="NadirClaw architecture — a drop-in local proxy between your tools and the providers" width="100%" />
+</p>
 
 Most LLM usage doesn't need a premium model. NadirClaw routes each prompt to the right tier automatically:
 
 <p align="center">
-  <img src="docs/images/usage-distribution.png" alt="Typical LLM usage distribution" width="500" />
+  <img src="docs/images/usage-distribution.svg" alt="Where the prompts go — typical complexity mix" width="100%" />
 </p>
 
 ### Step-by-Step
@@ -825,6 +1339,7 @@ NadirClaw uses a binary complexity classifier based on sentence embeddings:
 4. **Routing modifiers**: After classification, NadirClaw applies intelligent overrides:
    - **Agentic detection** — if tool definitions, tool-role messages, or agent system prompts are detected, forces the complex model
    - **Reasoning detection** — if 2+ reasoning markers are found, routes to the reasoning model
+   - **Vision routing** — if image content is detected, swaps to a vision-capable model
    - **Context window check** — if the conversation exceeds the model's context window, swaps to a model that fits
    - **Session persistence** — reuses the same model for follow-up messages in the same conversation
 
@@ -851,7 +1366,7 @@ Classification takes ~10ms on a warm encoder. The first request takes ~2-3 secon
 
 ## Cost Savings & Benchmarks — How Much Does NadirClaw Save?
 
-Real-world usage shows NadirClaw typically reduces LLM costs by 40-70% depending on your workload and model choices.
+How much NadirClaw saves depends on your prompt mix, the baseline model you are comparing against, and the models you route to. It prices every routed request against that baseline, so the figures below are measured sessions rather than a promise.
 
 ### Example: Claude Code Usage
 
@@ -913,6 +1428,7 @@ Based on 10,000+ production prompts:
 **Auto-upgraded to complex:**
 - Agentic requests with tool definitions
 - Prompts with 2+ reasoning markers
+- Requests containing images (vision routing)
 - Long conversations (>10 turns)
 - Requests exceeding the simple model's context window
 
@@ -929,9 +1445,67 @@ If you currently spend $100/month on Claude API:
 
 **Use `nadirclaw report` and `nadirclaw savings` to see your actual numbers.**
 
+### Context Optimize Savings
+
+On top of routing savings, Context Optimize compacts bloated payloads before they hit the provider. Benchmarked on Claude Opus 4.6 ($15/1M input tokens):
+
+| Payload Type | Tokens Saved | Savings % | Saved / 1K req |
+|---|---:|---:|---:|
+| Agentic assistant (8 turns, 5 tool schemas repeated) | 2,084 | 57% | $31.26 |
+| RAG pipeline (6 chunks, pretty-printed JSON) | 158 | 29% | $2.37 |
+| API response analysis (nested JSON) | 1,018 | 62% | $15.27 |
+| Long debug session (50 turns + JSON logs) | 2,442 | 63% | $36.63 |
+| OpenAPI spec context (5 endpoints) | 1,887 | 71% | $28.30 |
+
+Average: **61.5% input token reduction** across structured payloads. Enable with `--optimize safe`. See [full analysis](docs/context-optimize-savings.md).
+
+#### Modes
+
+```bash
+# Pick a mode when starting the server (or set NADIRCLAW_OPTIMIZE)
+nadirclaw serve --optimize safe          # lossless: dedup, json minify, whitespace
+nadirclaw serve --optimize aggressive    # + columnar JSON packing & semantic dedup
+nadirclaw serve --optimize progressive   # staged ladder, escalates only until budget met
+```
+
+Per request, override the mode in the body: `{"optimize": "aggressive", "messages": [...]}` (or `"off"` to disable).
+
+#### Backends — `native` (default) vs `headroom`
+
+The mode decides *how hard* to compress; the backend decides *who* runs it. `native` is the
+built-in, dependency-free pipeline. `headroom` delegates to the optional Apache-2.0
+[`headroom-ai`](https://pypi.org/project/headroom-ai/) package for statistical JSON crushing and
+content-type routing — and **transparently falls back to `native`** if it isn't installed or errors,
+so it never breaks a request.
+
+```bash
+pip install "nadirclaw[headroom]"
+NADIRCLAW_OPTIMIZE=safe NADIRCLAW_OPTIMIZE_BACKEND=headroom nadirclaw serve
+# per-request: {"optimize": "safe", "optimize_backend": "headroom", "messages": [...]}
+```
+
+#### Progressive (staged) compression
+
+`progressive` escalates through stages — `native_safe → native_aggressive → headroom_structural →
+headroom_ml` — and **stops as soon as a token budget is met**, so you only pay the cost (and
+fidelity risk) of heavier compression when lighter stages aren't enough. With no
+`NADIRCLAW_OPTIMIZE_TARGET_TOKENS` set, it stops after `native_aggressive` (dependency-free,
+lossless); Headroom stages are skipped silently if `headroom-ai` is absent, and the lossy ML stage
+only runs when explicitly allowed.
+
+```bash
+NADIRCLAW_OPTIMIZE=progressive \
+NADIRCLAW_OPTIMIZE_TARGET_TOKENS=180000 \
+NADIRCLAW_OPTIMIZE_MAX_STAGE=headroom_structural \
+nadirclaw serve
+```
+
+See the [backends & progressive reference](docs/context-optimize-savings.md#backends-native-default-vs-headroom)
+for the full ladder, the env-var table under [Configuration Reference](#configuration-reference), and safety/fallback details.
+
 ## API Endpoints
 
-Auth is disabled by default (local-only). Set `NADIRCLAW_AUTH_TOKEN` to require a bearer token.
+By default NadirClaw listens on `127.0.0.1` and, with no `NADIRCLAW_AUTH_TOKEN` set, accepts requests from localhost only (requests with a non-localhost `Host` header are refused too, which blocks DNS-rebinding pages). To serve other machines, set `NADIRCLAW_AUTH_TOKEN` and start with `--host 0.0.0.0`; clients then send `Authorization: Bearer <token>` or `X-API-Key: <token>`. `serve` refuses to bind a non-loopback host without a token.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -950,6 +1524,8 @@ Auth is disabled by default (local-only). Set `NADIRCLAW_AUTH_TOKEN` to require 
 |---|---|---|
 | `NADIRCLAW_SIMPLE_MODEL` | `gemini-3-flash-preview` | Model for simple prompts |
 | `NADIRCLAW_COMPLEX_MODEL` | `openai-codex/gpt-5.3-codex` | Model for complex prompts |
+| `NADIRCLAW_MID_MODEL` | *(falls back to simple)* | Model for mid-complexity prompts (enables 3-tier routing) |
+| `NADIRCLAW_TIER_THRESHOLDS` | `0.35,0.65` | Score thresholds for 3-tier routing: `simple_max,complex_min` |
 | `NADIRCLAW_REASONING_MODEL` | *(falls back to complex)* | Model for reasoning tasks |
 | `NADIRCLAW_FREE_MODEL` | *(falls back to simple)* | Free fallback model |
 | `NADIRCLAW_FALLBACK_CHAIN` | *(all tier models)* | Comma-separated cascade order on model failure |
@@ -960,14 +1536,27 @@ Auth is disabled by default (local-only). Set `NADIRCLAW_AUTH_TOKEN` to require 
 | `NADIRCLAW_BUDGET_STDOUT_ALERTS` | `false` | Print alerts to stdout (`true`/`1`/`yes` to enable) |
 | `NADIRCLAW_MODEL_RATE_LIMITS` | *(none)* | Per-model RPM limits, e.g. `gemini-3-flash-preview=30,gpt-4.1=60` |
 | `NADIRCLAW_DEFAULT_MODEL_RPM` | `0` (unlimited) | Default max requests/minute for any model not in `MODEL_RATE_LIMITS` |
-| `NADIRCLAW_AUTH_TOKEN` | *(empty — auth disabled)* | Set to require a bearer token |
+| `NADIRCLAW_MODEL_REGISTRY_URL` | *(empty — disabled)* | Optional registry JSON URL for `nadirclaw update-models` |
+| `NADIRCLAW_MODEL_METADATA_FILE` | `~/.nadirclaw/models.json` | Generated model metadata file loaded at startup |
+| `NADIRCLAW_LOCAL_MODEL_METADATA_FILE` | `~/.nadirclaw/models.local.json` | User-managed model metadata overrides loaded after generated metadata |
+| `NADIRCLAW_AUTH_TOKEN` | *(empty: localhost-only)* | Bearer token clients must send. Required to bind a non-loopback `--host` (and so for Docker) |
 | `GEMINI_API_KEY` | -- | Google Gemini API key (also accepts `GOOGLE_API_KEY`) |
 | `ANTHROPIC_API_KEY` | -- | Anthropic API key |
 | `OPENAI_API_KEY` | -- | OpenAI API key |
+| `NADIRCLAW_API_BASE` | *(empty — disabled)* | Custom base URL for OpenAI-compatible endpoints (vLLM, LocalAI, LM Studio, etc.) |
 | `OLLAMA_API_BASE` | `http://localhost:11434` | Ollama base URL |
 | `NADIRCLAW_CONFIDENCE_THRESHOLD` | `0.06` | Classification threshold (lower = more complex) |
 | `NADIRCLAW_PORT` | `8856` | Server port |
 | `NADIRCLAW_LOG_DIR` | `~/.nadirclaw/logs` | Log directory |
+| `NADIRCLAW_PREFER_ENV_KEYS` | `off` | Move provider env vars to the front of the credential chain, ahead of stored tokens. Set on servers so a personal OAuth/subscription token cannot capture shared traffic |
+| `NADIRCLAW_OPTIMIZE` | `off` | Context compression: `off` (disabled), `safe` (lossless), `aggressive`, or `progressive` (staged ladder that escalates to Headroom). `off` is the master on/off switch |
+| `NADIRCLAW_OPTIMIZE_MAX_TURNS` | `40` | Max conversation turns to keep when trimming history |
+| `NADIRCLAW_OPTIMIZE_BACKEND` | `native` | Optimizer backend: `native` (built-in) or `headroom` (needs `pip install nadirclaw[headroom]`; falls back to native if absent). See [savings analysis](docs/context-optimize-savings.md#backends-native-default-vs-headroom) |
+| `NADIRCLAW_HEADROOM_KOMPRESS` | `off` | When backend is `headroom`, enable Kompress ML text compression (downloads a HuggingFace model on first use) |
+| `NADIRCLAW_OPTIMIZE_PROGRESSIVE` | `off` | Legacy alias for `NADIRCLAW_OPTIMIZE=progressive` — forces the [progressive ladder](docs/context-optimize-savings.md#progressive-staged-compression) regardless of mode. Prefer setting `NADIRCLAW_OPTIMIZE=progressive` |
+| `NADIRCLAW_OPTIMIZE_TARGET_TOKENS` | _(unset)_ | Token budget for progressive compression (e.g. the model's context window). Unset → native stages only |
+| `NADIRCLAW_OPTIMIZE_MAX_STAGE` | `headroom_structural` | Cap on the progressive ladder: `native_safe`, `native_aggressive`, `headroom_structural`, or `headroom_ml` |
+| `NADIRCLAW_OPTIMIZE_ALLOW_LOSSY` | `off` | Permit the lossy ML prose stage (`headroom_ml`) in progressive compression |
 | `NADIRCLAW_LOG_RAW` | `false` | Log full raw requests and responses (`true`/`false`) |
 | `NADIRCLAW_MODELS` | `openai-codex/gpt-5.3-codex,gemini-3-flash-preview` | Legacy model list (fallback if tier vars not set) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(empty — disabled)* | OpenTelemetry collector endpoint (enables tracing) |
@@ -1035,7 +1624,7 @@ nadirclaw/
   credentials.py     # Credential storage, resolution chain, and OAuth token refresh
   encoder.py         # Shared SentenceTransformer singleton
   oauth.py           # OAuth login flows (OpenAI, Anthropic, Gemini, Antigravity)
-  routing.py         # Routing intelligence (agentic, reasoning, profiles, aliases, sessions)
+  routing.py         # Routing intelligence (agentic, reasoning, vision, profiles, aliases, sessions)
   report.py          # Log parsing and report generation
   metrics.py         # Built-in Prometheus metrics (zero dependencies)
   rate_limit.py      # Per-model rate limiting (sliding window, env-configurable)
@@ -1058,4 +1647,11 @@ nadirclaw/
 
 ## License
 
-MIT
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free to use, modify, and
+distribute for any **noncommercial** purpose (personal projects, research,
+education, evaluation, and noncommercial organizations).
+
+**Commercial use requires a separate license.** If you want to use NadirClaw
+in or for a for-profit business, or to build or operate a paid product or
+service, get a commercial license via [getnadir.com](https://getnadir.com)
+or contact nadir@nadirclaw.com.

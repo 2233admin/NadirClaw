@@ -12,8 +12,12 @@ class TestFallbackChainConfig:
         chain = settings.FALLBACK_CHAIN
         assert settings.COMPLEX_MODEL in chain
         assert settings.SIMPLE_MODEL in chain
-        # Complex should come first
-        assert chain.index(settings.COMPLEX_MODEL) < chain.index(settings.SIMPLE_MODEL)
+        
+        # In testing environments without explicit models configured,
+        # COMPLEX_MODEL might equal SIMPLE_MODEL if the default MODELS list is altered.
+        # Only verify ordering if they are distinct.
+        if settings.COMPLEX_MODEL != settings.SIMPLE_MODEL:
+            assert chain.index(settings.COMPLEX_MODEL) < chain.index(settings.SIMPLE_MODEL)
 
     def test_custom_chain_from_env(self, monkeypatch):
         """NADIRCLAW_FALLBACK_CHAIN env var should override defaults."""
@@ -38,6 +42,48 @@ class TestFallbackChainConfig:
         from nadirclaw.settings import Settings
         s = Settings()
         assert s.FALLBACK_CHAIN.count("same-model") == 1
+
+
+class TestPerTierFallbackConfig:
+    def test_per_tier_simple_fallback(self, monkeypatch):
+        """NADIRCLAW_SIMPLE_FALLBACK should override global chain for simple tier."""
+        monkeypatch.setenv("NADIRCLAW_SIMPLE_FALLBACK", "flash-a,flash-b")
+        monkeypatch.setenv("NADIRCLAW_FALLBACK_CHAIN", "global-a,global-b")
+        from nadirclaw.settings import Settings
+        s = Settings()
+        assert s.get_tier_fallback_chain("simple") == ["flash-a", "flash-b"]
+        # Other tiers should still use global chain
+        assert s.get_tier_fallback_chain("complex") == ["global-a", "global-b"]
+
+    def test_per_tier_complex_fallback(self, monkeypatch):
+        """NADIRCLAW_COMPLEX_FALLBACK should override global chain for complex tier."""
+        monkeypatch.setenv("NADIRCLAW_COMPLEX_FALLBACK", "big-a,big-b")
+        monkeypatch.delenv("NADIRCLAW_FALLBACK_CHAIN", raising=False)
+        from nadirclaw.settings import Settings
+        s = Settings()
+        assert s.get_tier_fallback_chain("complex") == ["big-a", "big-b"]
+
+    def test_per_tier_mid_fallback(self, monkeypatch):
+        """NADIRCLAW_MID_FALLBACK should override global chain for mid tier."""
+        monkeypatch.setenv("NADIRCLAW_MID_FALLBACK", "mid-a,mid-b")
+        from nadirclaw.settings import Settings
+        s = Settings()
+        assert s.get_tier_fallback_chain("mid") == ["mid-a", "mid-b"]
+
+    def test_no_per_tier_falls_back_to_global(self, monkeypatch):
+        """Without per-tier env var, should use global chain."""
+        monkeypatch.setenv("NADIRCLAW_FALLBACK_CHAIN", "global-x,global-y")
+        monkeypatch.delenv("NADIRCLAW_SIMPLE_FALLBACK", raising=False)
+        from nadirclaw.settings import Settings
+        s = Settings()
+        assert s.get_tier_fallback_chain("simple") == ["global-x", "global-y"]
+
+    def test_empty_tier_string_uses_global(self, monkeypatch):
+        """Empty tier name should return global chain."""
+        monkeypatch.setenv("NADIRCLAW_FALLBACK_CHAIN", "g1,g2")
+        from nadirclaw.settings import Settings
+        s = Settings()
+        assert s.get_tier_fallback_chain("") == ["g1", "g2"]
 
 
 class TestFallbackChainBehavior:
@@ -79,6 +125,7 @@ class TestFallbackChainBehavior:
         with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
             with patch("nadirclaw.server.settings") as mock_settings:
                 mock_settings.FALLBACK_CHAIN = ["model-primary", "model-backup"]
+                mock_settings.get_tier_fallback_chain.return_value = ["model-primary", "model-backup"]
                 response, actual_model, updated_info = await _call_with_fallback(
                     "model-primary", request, None, analysis_info
                 )
@@ -89,6 +136,11 @@ class TestFallbackChainBehavior:
         assert updated_info["fallback_from"] == "model-primary"
         assert "+fallback" in updated_info["strategy"]
         assert call_count["count"] == 2  # primary + backup
+        assert updated_info["fallback_reasons"] == [{
+            "model": "model-primary",
+            "error_type": "RateLimitExhausted",
+            "message": "Rate limit exhausted for model-primary (retry in 60s)",
+        }]
 
     @pytest.mark.asyncio
     async def test_fallback_cascade_through_chain(self, monkeypatch):
@@ -124,6 +176,7 @@ class TestFallbackChainBehavior:
         with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
             with patch("nadirclaw.server.settings") as mock_settings:
                 mock_settings.FALLBACK_CHAIN = ["m1", "m2", "m3", "m4"]
+                mock_settings.get_tier_fallback_chain.return_value = ["m1", "m2", "m3", "m4"]
                 response, actual_model, updated_info = await _call_with_fallback(
                     "m1", request, None, analysis_info
                 )
@@ -158,6 +211,7 @@ class TestFallbackChainBehavior:
         with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
             with patch("nadirclaw.server.settings") as mock_settings:
                 mock_settings.FALLBACK_CHAIN = ["m1", "m2"]
+                mock_settings.get_tier_fallback_chain.return_value = ["m1", "m2"]
                 response, actual_model, updated_info = await _call_with_fallback(
                     "m1", request, None, analysis_info
                 )
@@ -192,9 +246,102 @@ class TestFallbackChainBehavior:
         with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
             with patch("nadirclaw.server.settings") as mock_settings:
                 mock_settings.FALLBACK_CHAIN = ["model-only"]
+                mock_settings.get_tier_fallback_chain.return_value = ["model-only"]
                 response, actual_model, updated_info = await _call_with_fallback(
                     "model-only", request, None, analysis_info
                 )
 
         # Should return graceful error (since chain is exhausted after one model)
         assert "rate-limited" in response["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_provider_health_skips_unhealthy_fallback_candidate(self):
+        """Health-aware routing should try healthy fallback candidates first."""
+        from nadirclaw.provider_health import ProviderHealthTracker
+        from nadirclaw.server import _call_with_fallback
+
+        class MockRequest:
+            messages = []
+            stream = False
+            temperature = None
+            max_tokens = None
+            top_p = None
+            model_extra = {}
+
+        request = MockRequest()
+        analysis_info = {"tier": "complex", "strategy": "smart-routing"}
+        attempts = []
+        tracker = ProviderHealthTracker(failure_threshold=1, cooldown_seconds=60)
+        tracker.record_failure("m2", "ReadTimeout", "timed out")
+
+        async def mock_dispatch(model, req, provider):
+            attempts.append(model)
+            if model == "m1":
+                raise RuntimeError("primary failed")
+            return {
+                "content": f"Success from {model}",
+                "finish_reason": "stop",
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+            }
+
+        with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
+            with patch("nadirclaw.server.settings") as mock_settings:
+                mock_settings.PROVIDER_HEALTH = True
+                mock_settings.FALLBACK_CHAIN = ["m1", "m2", "m3"]
+                mock_settings.get_tier_fallback_chain.return_value = ["m1", "m2", "m3"]
+                with patch("nadirclaw.provider_health.provider_health_tracker", tracker):
+                    response, actual_model, updated_info = await _call_with_fallback(
+                        "m1", request, None, analysis_info
+                    )
+
+        assert attempts == ["m1", "m3"]
+        assert actual_model == "m3"
+        assert response["content"] == "Success from m3"
+        assert updated_info["fallback_chain_tried"] == ["m1"]
+
+    @pytest.mark.asyncio
+    async def test_provider_health_tries_unhealthy_candidates_if_needed(self):
+        """Unhealthy candidates remain a last resort instead of causing early failure."""
+        from nadirclaw.provider_health import ProviderHealthTracker
+        from nadirclaw.server import _call_with_fallback
+
+        class MockRequest:
+            messages = []
+            stream = False
+            temperature = None
+            max_tokens = None
+            top_p = None
+            model_extra = {}
+
+        request = MockRequest()
+        analysis_info = {"tier": "complex", "strategy": "smart-routing"}
+        attempts = []
+        tracker = ProviderHealthTracker(failure_threshold=1, cooldown_seconds=60)
+        tracker.record_failure("m2", "ReadTimeout", "timed out")
+
+        async def mock_dispatch(model, req, provider):
+            attempts.append(model)
+            if model in {"m1", "m3"}:
+                raise RuntimeError(f"{model} failed")
+            return {
+                "content": f"Success from {model}",
+                "finish_reason": "stop",
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+            }
+
+        with patch("nadirclaw.server._dispatch_model", side_effect=mock_dispatch):
+            with patch("nadirclaw.server.settings") as mock_settings:
+                mock_settings.PROVIDER_HEALTH = True
+                mock_settings.FALLBACK_CHAIN = ["m1", "m2", "m3"]
+                mock_settings.get_tier_fallback_chain.return_value = ["m1", "m2", "m3"]
+                with patch("nadirclaw.provider_health.provider_health_tracker", tracker):
+                    response, actual_model, updated_info = await _call_with_fallback(
+                        "m1", request, None, analysis_info
+                    )
+
+        assert attempts == ["m1", "m3", "m2"]
+        assert actual_model == "m2"
+        assert response["content"] == "Success from m2"
+        assert updated_info["fallback_chain_tried"] == ["m1", "m3"]
